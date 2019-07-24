@@ -365,25 +365,5 @@ ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, simpson_div))+
 
 
 
-
-
-data_MH_tidy <- data_MH %>% 
-  gather("Aphenogaster carolinensis":"Trachymyrmex septentrionalis", key = "Species", value = "Abundance") %>% 
-  mutate(Year = as.factor(2015))
-
-## subset just the pitfall data from MH that we'll combine with Gabriela's 
-## for accumulation, rank abu, and proporion non-native/Diversity analyses 
-data_MH_pitfall <- data_MH_tidy %>% 
-  filter(`Collection Method` == "Pit")
-
-## subset just Gabriela's data (2014 and 2015) and drop pitfalls for which there were no ants collected (Ants? == 0)
-data_GZ <- data_GZ_all %>% 
-  filter(Year == 2014 |
-           Year == 2015) %>% 
-  mutate(Year = as.factor(Year)) %>% 
-  filter(`Ants?` != 0)
-
-## condense to pitfall level (# species per pitfall)
-data_GZ_pitfall <- data_GZ %>% 
-  group_by(Year, Site, Station) %>% 
-  summarize(species_num = n())
+## Next step is to pull just Gabriela's data and look at year to year trends + seasonality in species composition
+## using ordination (nMDS or PCoA and PERMANOVA + permdist)
