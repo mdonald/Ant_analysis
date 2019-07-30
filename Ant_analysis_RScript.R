@@ -2,7 +2,7 @@
 ### Author: Marion Donald (pulling from scripts by Gabriela Zambrano and Meghan Hager)
 ### Date Started: 23 July 2019
 ### Purpose: Re-run analyses for species accumulation, richness, community composition, etc.
-### Date Updated: 23 July 2019
+### Date Updated: 30 July 2019
 
 
 library(tidyverse)
@@ -15,6 +15,8 @@ library(BiodiversityR)
 library(extrafont)
 library(ggpubr)
 library(broom)
+library(gridExtra)
+library(cowplot)
 
 ## read in data
 data_MH <- read_excel("Meghan Hager Big Thicket Ant Data Updated 07-22-19 (1).xlsx")
@@ -139,14 +141,16 @@ data_MH_2a <- data_MH_clean %>%
   mutate(Year = 2015)
 
 data_spacc_all <- data_MH_2a %>% 
-  bind_rows(data_GZ_wide2)
+  bind_rows(data_GZ_wide2) %>% 
+  mutate(`Pheidole flavens complex` = `Pheidole flavens complex` + `Pheidole moerens`) %>% ## combining P. moerens since it can't be reliably identified from P. flavens complex
+  select(-`Pheidole moerens`) ## drop P. moerens now that it's been combined with P. flavens
+
 
 data_spacc_year <- data_spacc_all %>% 
                   select(Year)
 
 data_spacc <- data_spacc_all %>% 
               select(-Year) # drop year, just keep the species by site matrix
-
 curve <- specaccum(data_spacc, method = "exact")
 
 pitfalls <- as.data.frame(curve$sites)
@@ -166,7 +170,7 @@ ggplot(spacc_df, aes(sites, richness))+
   labs(x = "Number of pitfall traps",
        y = "Species richness")
 
-## Chao estimated (37 species observed, 43 +/- 6 species predicted by Chao, 43 predicted back jack1 +/- 2)
+## Chao estimated (36 species observed, ~42 +/- 6 species predicted by Chao, 42 predicted by jack1 +/- 2)
 richness_est_df <- vegan::specpool(data_spacc)
 
 
@@ -180,7 +184,7 @@ RankAbun.1 <- BiodiversityR::rankabundance(as.data.frame(data_spacc))
 rank_abu_df <- as.data.frame(RankAbun.1) %>% 
   rownames_to_column(var = "species") #%>% 
 
-## native classification df to merge
+## native classification df to merge (native = 1, invasive = 0)
 native_info <- native_classification %>% 
   rename(species = "Species") %>% 
   mutate(species = as.character(species))
@@ -188,19 +192,50 @@ native_info <- native_classification %>%
 
 rank_abu_df2 <- rank_abu_df  %>% 
   full_join(native_info) %>% 
-  mutate(Native = as.factor(Native)) 
+  mutate(Native = as.character(Native))
+         
+## Pheidole flavens complex as Native for rank abundance
+rank_abu_P.flav.native <- rank_abu_df2 %>% 
+  mutate(Native = ifelse(species == "Pheidole flavens complex", 1, Native),
+         Classification = ifelse(Native == 1, "native", "non-native")) 
 
-## Rank abundance curve 
-ggplot(rank_abu_df2, aes(x=rank, y = abundance, label=species))+
-  geom_point(aes(color = Native, shape = Native))+
+
+
+## Rank abundance curve with Pheidole flavens complex as native (1)
+rank_abu_fig <- ggplot(rank_abu_P.flav.native, aes(x=rank, y = abundance, label=species))+
+  geom_point(aes(color = Classification, shape = Classification), size = 4)+
   geom_line()+
   theme_classic()+
   labs(x = "Species rank",
        y = "Abundance")+
-  geom_text(aes(label=ifelse(abundance>150,as.character(species),'')),hjust=-0.05,vjust=0, check_overlap = T)+
-  scale_color_manual(values = c("#055864", "#04C0DD", "gray49"))+
-  scale_shape_manual(values = c(16,17,21))#+
-  #theme(text = element_text(family = "Times New Roman"))
+  geom_text(aes(label=ifelse(abundance>150,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = T)+
+  scale_color_manual(values = c("#055864","#04C0DD", "gray49"))+
+  scale_shape_manual(values = c(16, 16))+
+  theme(text = element_text(family = "Times New Roman", size = 14))
+
+## Pheidole flavens complex as Native for rank abundance
+rank_abu_P.flav.non.native <- rank_abu_df2 %>% 
+  mutate(Native = ifelse(species == "Pheidole flavens complex", 0, Native),
+         Classification = ifelse(Native == 1, "native", "non-native")) 
+
+
+
+## Rank abundance curve with Pheidole flavens complex as non-native (NN) (0)
+rank_abu_NN_fig <- ggplot(rank_abu_P.flav.non.native, aes(x=rank, y = abundance, label=species))+
+  geom_point(aes(color = Classification, shape = Classification), size = 4)+
+  geom_line()+
+  theme_classic()+
+  labs(x = "Species rank",
+       y = "Abundance")+
+  geom_text(aes(label=ifelse(abundance>100,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = F)+
+  scale_color_manual(values = c("#055864","#04C0DD", "gray49"))+
+  scale_shape_manual(values = c(16, 16))+
+  theme(text = element_text(family = "Times New Roman", size = 14))
+
+
+plot_grid(rank_abu_fig, rank_abu_NN_fig)
+
+##
 
 ## diversity measures -- no difference in alpha diversity across the years
 shannon_div <- diversity(data_spacc, "shannon")
@@ -237,8 +272,14 @@ data_spacc_all_tidy <- data_spacc_all %>%
   rownames_to_column("ID") %>% 
   gather(key = "species", value = "abundance", c(-Year, -ID)) %>% 
   full_join(native_info)
-  
-data_spacc_all_tidy_abu <- data_spacc_all_tidy %>% 
+
+
+## Pheidole flavens complex is classed as "2" -- convert to native (1) or invasive (0) and run the analyses for proportion of invasives
+data_spacc_all_tidy_PF_native <- data_spacc_all_tidy %>% 
+  mutate(Native = ifelse(species == "Pheidole flavens complex", 1, Native))
+
+##### P. flavens as native -- proportion non-native analysis
+data_spacc_all_tidy_abu <- data_spacc_all_tidy_PF_native %>% 
   group_by(ID, Year, Native) %>% 
   summarize(abundance = sum(abundance))
 
@@ -299,8 +340,8 @@ ggplot(non_native_propotion_df, aes(non_native_abu_prop, simpson_div))+
   labs(x = "Proportion of non-native ant abundance",
        y = "Shannon diversity index")
 
-### do the same as above but this time by species occurrence (presence/absence) rather than abundance
-data_spacc_all_tidy_occ <- data_spacc_all_tidy %>% 
+### do the same as above but this time by species occurrence (presence/absence) rather than abundance (Pheidole flavens complex as native)
+data_spacc_all_tidy_occ <- data_spacc_all_tidy_PF_native %>% 
   filter(abundance != 0) %>%  # sp has to be present to contribute
  filter(Native == 1) %>% 
   group_by(ID, Year) %>% 
@@ -334,7 +375,7 @@ tidy(lm_fit_shan_occ)
 
 glance(lm_fit_shan_occ)
 
-## residuals plot looks more "random" -- linear model is more appropriate for these data than the abundance proportion
+## residuals plot looks more "random" -- linear model is more appropriate for these occurrence data than the abundance proportion
 ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, shannon_div))+
   geom_point()+
   geom_line(data = broom::augment(lm_fit_shan_occ), aes(x = prop_nonnative_sp, y = .fitted))+
@@ -353,6 +394,7 @@ tidy(lm_fit_simp_occ)
 
 glance(lm_fit_simp_occ)
 
+
 ## residuals plot looks more "random" -- linear model is more appropriate for these data than the abundance proportion
 ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, simpson_div))+
   geom_point()+
@@ -364,6 +406,139 @@ ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, simpson_div))+
 
 
 
+##### RUN THE ABOVE WITH P. flavens as non-native
+data_spacc_all_tidy_PF_non_native <- data_spacc_all_tidy %>% 
+  mutate(Native = ifelse(species == "Pheidole flavens complex", 0, Native))
+
+
+data_spacc_all_tidy_abu_NN <- data_spacc_all_tidy_PF_non_native %>% 
+  group_by(ID, Year, Native) %>% 
+  summarize(abundance = sum(abundance))
+
+total_abu_NN <- data_spacc_all_tidy_abu_NN %>% 
+  ungroup() %>% 
+  group_by(ID, Year) %>% 
+  summarize(total_abundance = sum(abundance))
+
+non_native_abu_NN <- data_spacc_all_tidy_abu_NN %>% 
+  filter(Native == 0) %>% 
+  rename(non_native_abu = abundance) %>% 
+  select(-Native)
+
+non_native_propotion_df_NN <- total_abu_NN %>% 
+  left_join(non_native_abu) %>% 
+  mutate(non_native_abu_prop = non_native_abu/total_abundance) %>% 
+  ungroup() %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  arrange(ID) %>% 
+  bind_cols(shannon_div_df,
+            simpson_div_df)
+
+#  linear model
+lm_fit <- lm(shannon_div ~ non_native_abu_prop, data=non_native_propotion_df_NN)
+summary(lm_fit)
+plot(lm_fit) ## residuals are not "random" -- they form an inverted U, linear model is not a great fit for these data
+tidy(lm_fit)
+
+glance(lm_fit)
+
+## looks like there's a hump-shaped relationship between alpha diversity and proportion of non-native ants,
+## not sure that the linear model is the best fit for these data
+ggplot(non_native_propotion_df, aes(non_native_abu_prop, shannon_div), color = "red")+
+  geom_jitter(data = non_native_propotion_df, color = "black")+
+  geom_point(data= non_native_propotion_df_NN, aes(color = "red"))+
+  geom_line(data = broom::augment(lm_fit), aes(x = non_native_abu_prop, y = .fitted))+
+  #facet_grid(~Year)+
+  theme_classic()+
+  labs(x = "Proportion of non-native ant abundance",
+       y = "Shannon diversity index")
+
+### for simpson div
+#  linear model
+lm_fit_simp<- lm(simpson_div ~ non_native_abu_prop, data=non_native_propotion_df)
+summary(lm_fit_simp)
+
+plot(lm_fit_simp)
+tidy(lm_fit_simp)
+
+glance(lm_fit_simp)
+
+## looks like there's a hump-shaped relationship between alpha diversity and proportion of non-native ants,
+## not sure that the linear model is the best fit for these data
+ggplot(non_native_propotion_df, aes(non_native_abu_prop, simpson_div))+
+  geom_point()+
+  geom_line(data = broom::augment(lm_fit), aes(x = non_native_abu_prop, y = .fitted))+
+  #facet_grid(~Year)+
+  theme_classic()+
+  labs(x = "Proportion of non-native ant abundance",
+       y = "Shannon diversity index")
+
+### do the same as above but this time by species occurrence (presence/absence) rather than abundance (Pheidole flavens complex as native)
+data_spacc_all_tidy_occ <- data_spacc_all_tidy_PF_non_native %>% 
+  filter(abundance != 0) %>%  # sp has to be present to contribute
+  filter(Native == 1) %>% 
+  group_by(ID, Year) %>% 
+  summarize(num_native_sp = n())
+
+data_spacc_all_tidy_non_native <- data_spacc_all_tidy %>% 
+  filter(abundance != 0) %>%  # sp has to be present to contribute
+  filter(Native == 0 | Native == 2) %>% 
+  group_by(ID, Year) %>% 
+  summarize(num_nonnative_sp = n())
+
+occurrence_proportion_df <- data_spacc_all_tidy_occ %>% 
+  full_join(data_spacc_all_tidy_non_native) %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  mutate(total_sp = num_native_sp + num_nonnative_sp,
+         prop_nonnative_sp = num_nonnative_sp/total_sp) %>% 
+  ungroup() %>% 
+  mutate(ID = as.numeric(ID)) %>% 
+  arrange(ID) %>% 
+  bind_cols(shannon_div_df, 
+            simpson_div_df)
+
+
+### for shannon div
+#  linear model
+lm_fit_shan_occ<- lm(shannon_div ~ prop_nonnative_sp, data=occurrence_proportion_df)
+summary(lm_fit_shan_occ)
+
+plot(lm_fit_shan_occ)
+tidy(lm_fit_shan_occ)
+
+glance(lm_fit_shan_occ)
+
+## residuals plot looks more "random" -- linear model is more appropriate for these occurrence data than the abundance proportion
+ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, shannon_div))+
+  geom_point()+
+  geom_line(data = broom::augment(lm_fit_shan_occ), aes(x = prop_nonnative_sp, y = .fitted))+
+  #facet_grid(~Year)+
+  theme_classic()+
+  labs(x = "Proportion of non-native ant species",
+       y = "Shannon diversity index")
+
+### for simpson div
+#  linear model
+lm_fit_simp_occ<- lm(simpson_div ~ prop_nonnative_sp, data=occurrence_proportion_df)
+summary(lm_fit_simp_occ)
+
+plot(lm_fit_simp_occ)
+tidy(lm_fit_simp_occ)
+
+glance(lm_fit_simp_occ)
+
+
+## residuals plot looks more "random" -- linear model is more appropriate for these data than the abundance proportion
+ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, simpson_div))+
+  geom_point()+
+  geom_line(data = broom::augment(lm_fit_simp_occ), aes(x = prop_nonnative_sp, y = .fitted))+
+  #facet_grid(~Year)+
+  theme_classic()+
+  labs(x = "Proportion of non-native ant species",
+       y = "Simpson diversity index")
+
 
 ## Next step is to pull just Gabriela's data and look at year to year trends + seasonality in species composition
 ## using ordination (nMDS or PCoA and PERMANOVA + permdist)
+
+
