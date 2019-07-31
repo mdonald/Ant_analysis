@@ -895,7 +895,7 @@ PCoA<- ggplot(data = points, aes(x = Axis.1, y = Axis.2, color = as.factor(Month
 
 PCoA
 
-adonis(dist_BC ~ Year*Month, data = GZ_wide_2, strata = GZ_wide_2$Site)
+adonis(dist_BC ~ Year*Month, data = GZ_wide_2, strata = GZ_wide_2$Month)
 ## Composition in ant community affected by seasonality but not by year
 
 ## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
@@ -925,3 +925,104 @@ boxplot(mod)
 ## no difference in homogeneity of dispersion, can continue with the seasonality differences being due to compositional differences
 ## rather than being driven by differences in composition within sample groups (higher vs lower beta diversity)
 
+
+## trying again with multiple samples per site:
+GZ_wide_orig <- data_GZ_clean %>% 
+  filter(Year == 2014 |
+           Year == 2015,
+         Abundance != "NA") %>% 
+  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  # group_by(species) %>% 
+  #  mutate(grouped_id = row_number()) %>% 
+  spread(key = "species", value = "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) ## make all the NAs under the species names zeros (for this analysis) 
+
+
+GZ_wide_NMDS <- GZ_wide_orig %>% 
+  ungroup() %>% 
+  select(-Year, -Site, -Month, -Station)
+
+dist_BC <- vegdist(GZ_wide_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
+
+library(ape)
+PCOA <- pcoa(dist_BC)
+
+
+# plot the eigenvalues and interpret
+barplot(PCOA$values$Relative_eig[1:10])
+# Can you also calculate the cumulative explained variance of the first 3 axes?
+
+# Some distance measures may result in negative eigenvalues. In that case, add a correction:
+PCOA <- pcoa(dist, correction = "cailliez")
+
+# Plot your results
+biplot.pcoa(PCOA)
+
+# You see what`s missing? 
+# Indeed, there are no species plotted on this biplot. 
+# That's because we used a dissimilarity matrix (sites x sites) 
+# as input for the PCOA function. 
+# Hence, no species scores could be calculated. 
+#However, we could work around this problem like this:
+biplot.pcoa(PCOA, GZ_wide_NMDS)
+
+
+
+# Make this into a ggplot:
+# Extract the coordinates:
+points <- as.data.frame(PCOA$vectors) %>% 
+  select(Axis.1, Axis.2) %>% 
+  rownames_to_column()
+points
+
+# Add metadata to the points:
+GZ_wide_2 <- GZ_wide_orig %>% 
+  rownames_to_column()
+
+points <- points %>% mutate(Sample = rownames(points),
+                            Year = GZ_wide_2$Year[match(rownames(points), GZ_wide_2$rowname)],
+                            Month = GZ_wide_2$Month[match(rownames(points), GZ_wide_2$rowname)]) 
+
+points
+
+# Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
+
+points<- points %>% 
+  unite(month_yr, c("Month", "Year"), remove = F)
+
+PCoA<- ggplot(data = points, aes(x = Axis.1, y = Axis.2, color = as.factor(Month)))+
+  geom_point(aes(shape = as.factor(Year)))+
+  stat_ellipse()+
+  theme_classic()
+
+
+PCoA
+
+adonis(dist_BC ~ Year*Month, data = GZ_wide_2, strata = GZ_wide_2$Site)
+## Composition in ant community affected by the interaction of season and year --- but we're getting the weird horseshoe shape here... 
+## think it's better to pool stations at the site level
+
+## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
+
+group <- GZ_wide_2$Month
+## Calculate multivariate dispersions
+mod <- betadisper(dist_BC, group)
+mod
+
+## Perform test
+anova(mod)
+
+## Permutation test for F
+permutest(mod, pairwise = TRUE)
+
+## Tukey's Honest Significant Differences
+(mod.HSD <- TukeyHSD(mod))
+plot(mod.HSD)
+
+## Plot the groups and distances to centroids on the
+## first two PCoA axes
+plot(mod)
+
+## Draw a boxplot of the distances to centroid for each group
+boxplot(mod)
