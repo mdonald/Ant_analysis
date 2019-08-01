@@ -46,7 +46,9 @@ data_GZ_species <- data_GZ_all %>%
 ## this is resulting in duplicates
 
 data_GZ_clean <- data_GZ_all %>% 
-  filter(Genus != "NA") %>% 
+  filter(Year == 2014 | ## pull out just the two years of Gabriela's data
+           Year == 2015,
+         Genus != "NA") %>% 
   mutate(Species = ifelse(Species == "Carolinensis", "carolinensis", ## correct the species names (mispellings and uppercase-to-lowercase)
                           ifelse(Species == "Depilis", "depilis", 
                           ifelse(Species == "Patagonicus", "patagonicus",
@@ -68,12 +70,18 @@ data_GZ_clean <- data_GZ_all %>%
                           ifelse(Species == "Louisianae", "louisianae", Species))))))))))))))))))),
          Genus = ifelse(Genus == "Pachydondyla", "Pachycondyla", Genus))
 
-data_GZ_clean_sp <- data_GZ_clean %>% 
-  filter(Year == 2014 |
-           Year == 2015,
-         Abundance != "NA") %>% 
+data_GZ_clean_sp_check <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
   filter(Genus != "NA") %>% 
   unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  spread("species", "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum) %>% 
+  gather(species, Abundance)
+  
+  
+data_GZ_clean_sp <- data_GZ_clean_sp_check %>% 
+  ungroup() %>% 
   select(species) %>% 
   distinct(species) %>% 
   arrange(species) 
@@ -96,13 +104,11 @@ data_MH_sp <- data_MH_clean %>%
 
 full_sp_list <- full_join(data_GZ_clean_sp, data_MH_sp) ## this is the full species list across the two datasets (but including all data from 2014-2018)
 
-#### dataset up for species accumulation curve
-## filter GZ data to be the samples Gabriela collected in 2014 and 2015 and transform to wide df for species accumulation curve 
+#### data set up for species accumulation curve
+##  transform to wide df for species accumulation curve 
 
 data_GZ_wide <- data_GZ_clean %>% 
-  filter(Year == 2014 |
-           Year == 2015,
-         Abundance != "NA") %>% 
+  filter(Abundance != "NA") %>% 
   select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
     unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
   # group_by(species) %>% 
@@ -211,7 +217,7 @@ rank_abu_fig <- ggplot(rank_abu_P.flav.native, aes(x=rank, y = abundance, label=
   theme_classic()+
   labs(x = "Species rank",
        y = "Abundance")+
-  geom_text(aes(label=ifelse(abundance>150,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = T)+
+  geom_text(aes(label=ifelse(abundance>100,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = F)+
   scale_color_manual(values = c("#055864","#04C0DD", "gray49"))+
   scale_shape_manual(values = c(16, 16))+
   theme(text = element_text(family = "Times New Roman", size = 14))
@@ -350,7 +356,7 @@ glance(lm_fit)
 ## not sure that the linear model is the best fit for these data
 ggplot(non_native_propotion_df, aes(non_native_abu_prop, shannon_div))+
   geom_point()+
-  geom_line(data = broom::augment(lm_fit), aes(x = non_native_abu_prop, y = .fitted))+
+  #geom_line(data = broom::augment(lm_fit), aes(x = non_native_abu_prop, y = .fitted))+
   #facet_grid(~Year)+
   theme_classic()+
     labs(x = "Proportion of non-native ant abundance",
@@ -359,18 +365,18 @@ ggplot(non_native_propotion_df, aes(non_native_abu_prop, shannon_div))+
 ### for simpson div
 #  linear model
 lm_fit_simp<- lm(simpson_div ~ non_native_abu_prop, data=non_native_propotion_df)
-summary(lm_fit_simp)
+#summary(lm_fit_simp)
 
-plot(lm_fit_simp)
-tidy(lm_fit_simp)
+#plot(lm_fit_simp)
+#tidy(lm_fit_simp)
 
-glance(lm_fit_simp)
+#glance(lm_fit_simp)
 
 ## looks like there's a hump-shaped relationship between alpha diversity and proportion of non-native ants,
 ## not sure that the linear model is the best fit for these data
 ggplot(non_native_propotion_df, aes(non_native_abu_prop, simpson_div))+
   geom_point()+
-  geom_line(data = broom::augment(lm_fit), aes(x = non_native_abu_prop, y = .fitted))+
+  geom_line(data = broom::augment(lm_fit_simp), aes(x = non_native_abu_prop, y = .fitted))+
   #facet_grid(~Year)+
   theme_classic()+
   labs(x = "Proportion of non-native ant abundance",
@@ -404,12 +410,12 @@ occurrence_proportion_df <- data_spacc_all_tidy_occ %>%
 ### for shannon div
 #  linear model
 lm_fit_shan_occ<- lm(shannon_div ~ prop_nonnative_sp, data=occurrence_proportion_df)
-summary(lm_fit_shan_occ)
+#summary(lm_fit_shan_occ)
 
-plot(lm_fit_shan_occ)
-tidy(lm_fit_shan_occ)
+#plot(lm_fit_shan_occ)
+#tidy(lm_fit_shan_occ)
 
-glance(lm_fit_shan_occ)
+#glance(lm_fit_shan_occ)
 
 ## residuals plot looks more "random" -- linear model is more appropriate for these occurrence data than the abundance proportion
 ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, shannon_div))+
@@ -425,10 +431,10 @@ ggplot(occurrence_proportion_df, aes(prop_nonnative_sp, shannon_div))+
 lm_fit_simp_occ<- lm(simpson_div ~ prop_nonnative_sp, data=occurrence_proportion_df)
 summary(lm_fit_simp_occ)
 
-plot(lm_fit_simp_occ)
-tidy(lm_fit_simp_occ)
+#plot(lm_fit_simp_occ)
+#tidy(lm_fit_simp_occ)
 
-glance(lm_fit_simp_occ)
+#glance(lm_fit_simp_occ)
 
 
 ## residuals plot looks more "random" -- linear model is more appropriate for these data than the abundance proportion
@@ -544,10 +550,10 @@ plot_grid(occurrence_prop_sp_fig, abundance_prop_alpha_fig)
 #  linear model
 lm_fit <- lm(shannon_div ~ non_native_abu_prop, data=non_native_propotion_df_NN)
 summary(lm_fit)
-plot(lm_fit) ## residuals are not "random" -- they form an inverted U, linear model is not a great fit for these data
-tidy(lm_fit)
+#plot(lm_fit) ## residuals are not "random" -- they form an inverted U, linear model is not a great fit for these data
+#tidy(lm_fit)
 
-glance(lm_fit)
+#glance(lm_fit)
 
 ## looks like there's a hump-shaped relationship between alpha diversity and proportion of non-native ants,
 ## not sure that the linear model is the best fit for these data
@@ -694,8 +700,62 @@ dist_jac <- vegdist(data_NMDS, method = "jaccard", binary = TRUE) # Binary jacca
 dist_BC <- vegdist(data_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
 
 # Then generate an MDS object using metaMDS():
-mds <- metaMDS(dist_BC)
+mds <- metaMDS(dist_BC) ## stress is too low with the full community -- too many super rare species
 str(mds)
+
+
+
+## NMDS isn't converging with all of the individual pitfalls -- likely because many of them have few but differenct ant spp
+## try this again but now grouped by site within year and season
+
+## drop super rare species (present in > 1% of of total abundance) -- this results in 11 species
+
+data_new <- data_GZ_clean %>% 
+  select(Year, Month, Genus, Species, Abundance) %>% 
+  filter(Year == 2014 |
+           Year == 2015) %>% 
+  rownames_to_column() %>% 
+  unite(species, c("Genus","Species"), sep =  " ", remove = F) %>% 
+  spread(key = "species", value = "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0))%>%  ## make all the NAs under the species names zeros (for this analysis) 
+  group_by(Year, Month) %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum) %>% 
+  gather(key = "species", value = "Abundance", c(-Year,-Month)) %>% 
+  ungroup() %>% 
+  group_by(species) %>% 
+  summarize(Abundance = sum(Abundance)) %>% 
+  mutate(percent_total = Abundance/1754) %>% 
+  filter(percent_total > 0.01)
+
+sp_list <- as.list(data_new$species)
+
+total_abu <- data_new %>% 
+  ungroup() %>% 
+  summarize(total_abundance = sum(Abundance))
+
+data_GZ_clean_subset <- data_GZ_clean  %>% 
+  unite(species, c("Genus", "Species"), sep =" ", remove = F) %>% 
+filter(species %in% sp_list) %>% 
+spread("species", "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  group_by(Year, Month, Site) %>% ## summarize by site since we have multiple pitfall traps per site
+  ## and the individual pitfall level resolution is too fine-scale
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Solenopsis molesta`), sum)
+
+
+GZ_wide_NMDS_new <- data_GZ_clean_subset %>% 
+  ungroup() %>% 
+  select(-c(Year:Site))
+
+
+
+# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
+dist_jac <- vegdist(GZ_wide_NMDS_new, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
+dist_BC <- vegdist(GZ_wide_NMDS_new, method = "bray")#, binary = TRUE) # Bray-Curtis distance
+
+# Then generate an MDS object using metaMDS(): ### hooray!! it converges and stress is 0.173
+mds <- metaMDS(dist_BC, trymax = 300)
+
 # Plot the mds using basic graphics
 plot(mds)
 
@@ -705,202 +765,63 @@ points <- as.data.frame(mds$points)
 points
 
 # Add metadata to the points:
-data_GZ_wide <- data_GZ_wide %>% 
-  rownames_to_column()
-
-points <- points %>% mutate(Sample = rownames(points),
-                            Year = data_GZ_wide$Year[match(rownames(points), data_GZ_wide$rowname)]) 
-                            Altitude = metadata$Altitude[match(rownames(points), metadata$Plotid)])
-points
-
-# Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
-
-nmds <- ggplot(data = points, aes(x = MDS1, y = MDS2))+
-  geom_point(aes(color = Year), size = 9)
-
-
-nmds +
-  theme_classic()
-
-## two outliers are really pulling this apart -- drop these - but stress is basically zero -- re-run NMDS without these samples
-outliers_rmvd <- points %>% 
-  filter(MDS1 < .5,
-         MDS2 < .002)
-ggplot(data = outliers_rmvd, aes(x = MDS1, y = MDS2))+
-  geom_point(aes(color = as.factor(Year)))+
-  theme_classic()
-
-
-## pull out these two points (#79 and 168) and drop these from the original df
-outliers_ID <- points %>% 
+data_GZ_clean_subset_2 <- data_GZ_clean_subset %>% 
   rownames_to_column() %>% 
-  filter(MDS1 > .4 |
-         MDS2 > .002)
+  mutate(Season = ifelse(Month == 5, "Spring", "Fall")) %>% 
+  unite(Season_yr, c(Season, Year), remove =F)
 
-data_GZ_wide_new <- data_GZ_wide %>% 
-  filter(rowname != 79,
-         rowname != 168)
+## get the proportion of non-native/total spp for this subset of data
+subset_prop_NN <- data_GZ_clean_subset_2 %>% 
+  gather("Species", "abundance", -c(rowname:Site, Season)) %>% 
+  group_by(Season_yr, Site) %>% 
+  left_join(native_classification) %>%
+  filter(abundance >0) %>% 
+  summarize(species_total = length(abundance),
+            native_total = sum(Native)) %>% 
+  mutate(non_native_total = species_total - native_total,
+         prop_non_native = non_native_total/species_total,
+  category = ifelse(prop_non_native < .33, "Low", 
+                    ifelse(prop_non_native > .66, "High", "Medium")))
 
 
-data_NMDS <- data_GZ_wide_new %>% 
-  select(-Year, -rowname)
-
-
-
-# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
-dist_jac <- vegdist(data_NMDS, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
-dist_BC <- vegdist(data_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
-
-# Then generate an MDS object using metaMDS():
-mds <- metaMDS(dist_BC, trymax = 100)
-
-mds2<- metaMDS(dist_BC, trymax = 100, previous.best = mds, noshare=0.1)
-str(mds)
-# Plot the mds using basic graphics
-plot(mds)
-
-# Make this into a ggplot:
-# Extract the coordinates:
-points <- as.data.frame(mds2$points)
-points
-
-# Add metadata to the points:
-data_GZ_wide_new <- data_GZ_wide_new %>% 
-  rownames_to_column()
+data_GZ_clean_subset_2 <- data_GZ_clean_subset_2 %>% 
+  left_join(subset_prop_NN, by = c("Season_yr", "Site"))
 
 points <- points %>% mutate(Sample = rownames(points),
-                            Year = data_GZ_wide$Year[match(rownames(points), data_GZ_wide$rowname)]) 
-Altitude = metadata$Altitude[match(rownames(points), metadata$Plotid)])
-points
-
-# Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
-
-nmds <- ggplot(data = points, aes(x = MDS1, y = MDS2))+
-  geom_point(aes(color = Year))
-
-
-nmds +
-  theme_classic()
-
-
-## NMDS isn't converging with all of the individual pitfalls -- likely because many of them have few but differenct ant spp
-## try this again but now grouped by site within year and season
-GZ_wide <- data_GZ_clean %>% 
-  filter(Year == 2014 |
-           Year == 2015,
-         Abundance != "NA") %>% 
-  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
-  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
-  # group_by(species) %>% 
-  #  mutate(grouped_id = row_number()) %>% 
-  spread(key = "species", value = "Abundance") %>% 
-  mutate_all(~replace(., is.na(.), 0)) %>%  ## make all the NAs under the species names zeros (for this analysis) 
-group_by(Year, Site, Month) %>% 
-  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum)
-
-GZ_wide_NMDS <- GZ_wide %>% 
-  ungroup() %>% 
-  select(-Year, -Site, -Month)
-
-
-
-# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
-dist_jac <- vegdist(GZ_wide_NMDS, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
-dist_BC <- vegdist(GZ_wide_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
-
-# Then generate an MDS object using metaMDS(): ### STILL NOT WORKING WITH NMDS
-mds <- metaMDS(dist_jac, trymax = 100, noshare=0.1)
-
-mds2<- metaMDS(dist_BC, trymax = 100, previous.best = mds, noshare=0.1)
-str(mds)
-# Plot the mds using basic graphics
-plot(mds)
-
-# Make this into a ggplot:
-# Extract the coordinates:
-points <- as.data.frame(mds2$points)
-points
-
-# Add metadata to the points:
-data_GZ_wide_new <- data_GZ_wide_new %>% 
-  rownames_to_column()
-
-points <- points %>% mutate(Sample = rownames(points),
-                            Year = data_GZ_wide$Year[match(rownames(points), data_GZ_wide$rowname)]) 
-Altitude = metadata$Altitude[match(rownames(points), metadata$Plotid)])
-points
-
-# Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
-
-nmds <- ggplot(data = points, aes(x = MDS1, y = MDS2))+
-  geom_point(aes(color = Year))
-
-
-nmds +
-  theme_classic()
-
-
-## trying PoA
-library(ape)
-PCOA <- pcoa(dist_BC)
-
-
-# plot the eigenvalues and interpret
-barplot(PCOA$values$Relative_eig[1:10])
-# Can you also calculate the cumulative explained variance of the first 3 axes?
-
-# Some distance measures may result in negative eigenvalues. In that case, add a correction:
-PCOA <- pcoa(dist, correction = "cailliez")
-
-# Plot your results
-biplot.pcoa(PCOA)
-
-# You see what`s missing? 
-# Indeed, there are no species plotted on this biplot. 
-# That's because we used a dissimilarity matrix (sites x sites) 
-# as input for the PCOA function. 
-# Hence, no species scores could be calculated. 
-#However, we could work around this problem like this:
-biplot.pcoa(PCOA, GZ_wide_NMDS)
-
-
-
-# Make this into a ggplot:
-# Extract the coordinates:
-points <- as.data.frame(PCOA$vectors) %>% 
-  select(Axis.1, Axis.2) %>% 
-  rownames_to_column()
-points
-
-# Add metadata to the points:
-GZ_wide_2 <- GZ_wide %>% 
-  rownames_to_column()
-
-points <- points %>% mutate(Sample = rownames(points),
-                            Year = GZ_wide_2$Year[match(rownames(points), GZ_wide_2$rowname)],
-                            Month = GZ_wide_2$Month[match(rownames(points), GZ_wide_2$rowname)]) 
+                            Year = data_GZ_clean_subset_2$Year[match(rownames(points), data_GZ_clean_subset_2$rowname)],
+                            Month = data_GZ_clean_subset_2$Month[match(rownames(points), data_GZ_clean_subset_2$rowname)],
+                            Season = data_GZ_clean_subset_2$Season[match(rownames(points), data_GZ_clean_subset_2$rowname)],
+                            Season_yr = data_GZ_clean_subset_2$Season_yr[match(rownames(points), data_GZ_clean_subset_2$rowname)],
+                            category = data_GZ_clean_subset_2$category[match(rownames(points), data_GZ_clean_subset_2$rowname)],
+                            prop_non_native = data_GZ_clean_subset_2$prop_non_native[match(rownames(points), data_GZ_clean_subset_2$rowname)]) 
 
 points
 
 # Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
 
-points<- points %>% 
-  unite(month_yr, c("Month", "Year"), remove = F)
-
-PCoA<- ggplot(data = points, aes(x = Axis.1, y = Axis.2, color = as.factor(Month)))+
-  geom_point(aes(shape = as.factor(Year)))+
-  stat_ellipse()+
+ggplot(data = points, aes(x = MDS1, y = MDS2))+
+  geom_point(aes(color = Season))+
+  stat_ellipse(aes(color = (Season)))+
+  scale_color_manual(values = c("darkgray", "black"))+
   theme_classic()
 
+ggplot(data = points, aes(x = MDS1, y = MDS2))+
+  geom_point(aes(color = as.factor(Month)))+
+  stat_ellipse(aes(color = as.factor(Month)))+
+  labs(x = "nMDS1",
+       y = "nMDS2")+
+  theme_classic()
 
-PCoA
+perm <- adonis(dist_BC ~ Season*Year, data = data_GZ_clean_subset_2, strata = data_GZ_clean_subset_2$Site)
 
-adonis(dist_BC ~ Year*Month, data = GZ_wide_2, strata = GZ_wide_2$Month)
+perm
+
+
 ## Composition in ant community affected by seasonality but not by year
 
 ## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
 
-group <- GZ_wide_2$Month
+group <- data_GZ_clean_subset_2$Month
 ## Calculate multivariate dispersions
 mod <- betadisper(dist_BC, group)
 mod
@@ -925,104 +846,172 @@ boxplot(mod)
 ## no difference in homogeneity of dispersion, can continue with the seasonality differences being due to compositional differences
 ## rather than being driven by differences in composition within sample groups (higher vs lower beta diversity)
 
+#############################
+################## using Meghan's data test for correlation between proportion of non-native ants and distance to edge of preserve
+### This section is just for pitfall traps
 
-## trying again with multiple samples per site:
-GZ_wide_orig <- data_GZ_clean %>% 
-  filter(Year == 2014 |
-           Year == 2015,
-         Abundance != "NA") %>% 
-  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
-  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
-  # group_by(species) %>% 
-  #  mutate(grouped_id = row_number()) %>% 
-  spread(key = "species", value = "Abundance") %>% 
-  mutate_all(~replace(., is.na(.), 0)) ## make all the NAs under the species names zeros (for this analysis) 
+## GIS dataframe created by Meghan
+GIS_df <- read_excel("BIG THICKET GIS DATA 4-6-2016.xlsx", sheet="Sheet1")
 
+GIS_select <- GIS_df %>% 
+  select(Site_Code, DistanceToEdgeOfPreserve)
 
-GZ_wide_NMDS <- GZ_wide_orig %>% 
-  ungroup() %>% 
-  select(-Year, -Site, -Month, -Station)
+data_MH_pit <- data_MH_clean %>% 
+  filter(`Collection Method` == "Pit") %>% 
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0) 
 
-dist_BC <- vegdist(GZ_wide_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
-
-library(ape)
-PCOA <- pcoa(dist_BC)
-
-
-# plot the eigenvalues and interpret
-barplot(PCOA$values$Relative_eig[1:10])
-# Can you also calculate the cumulative explained variance of the first 3 axes?
-
-# Some distance measures may result in negative eigenvalues. In that case, add a correction:
-PCOA <- pcoa(dist, correction = "cailliez")
-
-# Plot your results
-biplot.pcoa(PCOA)
-
-# You see what`s missing? 
-# Indeed, there are no species plotted on this biplot. 
-# That's because we used a dissimilarity matrix (sites x sites) 
-# as input for the PCOA function. 
-# Hence, no species scores could be calculated. 
-#However, we could work around this problem like this:
-biplot.pcoa(PCOA, GZ_wide_NMDS)
+data_MH_pit_summary <- data_MH_pit %>% 
+  group_by(Site, `Specific Site Number`, Site_Code, Replicate) %>% 
+  summarize(total_species = length(Species),
+            total_native = sum(Native),
+            total_non_native = total_species-total_native,
+            prop_non_native = total_non_native/total_species) %>%
+  mutate(non_native_binom = ifelse(total_non_native >0, 1, 0)) %>% 
+  left_join(GIS_select) %>% 
+  mutate(Site_ID = `Specific Site Number`,
+dist_km = (DistanceToEdgeOfPreserve/1000)) ## convert to km since glmer is having trouble with the scale of the data
 
 
+library(lme4)
 
-# Make this into a ggplot:
-# Extract the coordinates:
-points <- as.data.frame(PCOA$vectors) %>% 
-  select(Axis.1, Axis.2) %>% 
-  rownames_to_column()
-points
+## Binomial model of presence of non-native ant sp in pitfall trap by distance to preserve edge (Random effect of SITE)
+## could also do model fitting
 
-# Add metadata to the points:
-GZ_wide_2 <- GZ_wide_orig %>% 
-  rownames_to_column()
+glmer_0 <- glmer(cbind(total_non_native, total_native) ~ (1|Site_ID), family = "binomial", data = data_MH_pit_summary)
+glmer_fit <- glmer(cbind(total_non_native, total_native) ~ dist_km + (1|Site_ID), family = "binomial", data = data_MH_pit_summary)
 
-points <- points %>% mutate(Sample = rownames(points),
-                            Year = GZ_wide_2$Year[match(rownames(points), GZ_wide_2$rowname)],
-                            Month = GZ_wide_2$Month[match(rownames(points), GZ_wide_2$rowname)]) 
+summary(glmer_0)
+summary(glmer_fit)
 
-points
+## model with the fixed effect of distance has the lower AIC value and the majority of the weight
+AICtab(glmer_0, glmer_fit, weights = T)
 
-# Q4: Now that we have the MDS ordination data, how can we make it into a nice-looking ggplot?
+plot(x=data_MH_pit_summary$dist_km, y = data_MH_pit_summary$non_native_binom)
+MyData =data.frame(cbind(dist_km = seq(from = min(data_MH_pit_summary$dist_km), to = max(data_MH_pit_summary$dist_km, length.out = nrow(data_MH_pit_summary))),
+                   Site_ID = seq(from = min(data_MH_pit_summary$dist_km), to = max(data_MH_pit_summary$dist_km, length.out = nrow(data_MH_pit_summary)))))
+Pred <- predict(glmer_fit, newdata = MyData, type = "response", allow.new.levels=T)
+lines(MyData$dist_km, Pred)
 
-points<- points %>% 
-  unite(month_yr, c("Month", "Year"), remove = F)
+## make this in ggplot
 
-PCoA<- ggplot(data = points, aes(x = Axis.1, y = Axis.2, color = as.factor(Month)))+
-  geom_point(aes(shape = as.factor(Year)))+
-  stat_ellipse()+
+pd <-with(data_MH_pit_summary,
+          data.frame(cbind(dist_km = seq(min(data_MH_pit_summary$dist_km), max(data_MH_pit_summary$dist_km), length.out = nrow(data_MH_pit_summary))),
+                     Site_ID = seq(min(data_MH_pit_summary$dist_km), max(data_MH_pit_summary$dist_km), length.out = nrow(data_MH_pit_summary))))
+
+pd1 <- cbind(pd, predict(glmer_fit, newdata=pd, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(glmer_fit, newdata = pd, type = "response", allow.new.levels = T)`)
+
+
+## binomial model fit to presence/absence of any non-native ant sp found in pitfall trap
+ggplot(data_MH_pit_summary, aes((dist_km), non_native_binom))+
+  geom_point(position = position_jitter(width =.02, height = 0.02), alpha = .6)+
+geom_line(data = pd1, aes(x = dist_km_x, y = fit_y))+
+  theme_classic()+
+  labs(x = "Distance to edge of preserve (km)",
+       y = "Probability of non-native ant species present")
+
+anova(glmer_fit, test="Chisq")
+
+##### visualize and test for relationship between the to dominant non-native ants and distance to edge
+data_MH_pit_invasives <- data_MH_clean %>% 
+  filter(`Collection Method` == "Pit") %>% 
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0,
+         Species == "Nylanderia fulva" |
+           Species == "Solenopsis invicta") %>% 
+  left_join(GIS_select) %>% 
+  mutate(dist_km = (DistanceToEdgeOfPreserve/1000))
+
+
+ggplot(data_MH_pit_invasives,aes(dist_km, abundance))+
+  geom_point(aes(color = Species))+
   theme_classic()
 
 
-PCoA
 
-adonis(dist_BC ~ Year*Month, data = GZ_wide_2, strata = GZ_wide_2$Site)
-## Composition in ant community affected by the interaction of season and year --- but we're getting the weird horseshoe shape here... 
-## think it's better to pool stations at the site level
+############################ same as above but for all collection methods
 
-## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
+## GIS dataframe created by Meghan
+GIS_select <- GIS_df %>% 
+  select(Site_Code, DistanceToEdgeOfPreserve)
 
-group <- GZ_wide_2$Month
-## Calculate multivariate dispersions
-mod <- betadisper(dist_BC, group)
-mod
+data_MH_all <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% 
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0) 
 
-## Perform test
-anova(mod)
+data_MH_all_summary <- data_MH_pit %>% 
+  group_by(Site, `Specific Site Number`, Site_Code, Replicate) %>% 
+  summarize(total_species = length(Species),
+            total_native = sum(Native),
+            total_non_native = total_species-total_native,
+            prop_non_native = total_non_native/total_species) %>%
+  mutate(non_native_binom = ifelse(total_non_native >0, 1, 0)) %>% 
+  left_join(GIS_select) %>% 
+  mutate(Site_ID = `Specific Site Number`,
+         dist_km = (DistanceToEdgeOfPreserve/1000)) ## convert to km since glmer is having trouble with the scale of the data
 
-## Permutation test for F
-permutest(mod, pairwise = TRUE)
 
-## Tukey's Honest Significant Differences
-(mod.HSD <- TukeyHSD(mod))
-plot(mod.HSD)
+library(lme4)
 
-## Plot the groups and distances to centroids on the
-## first two PCoA axes
-plot(mod)
+## Binomial model of presence of non-native ant sp in pitfall trap by distance to preserve edge (Random effect of SITE)
+## could also do model fitting
 
-## Draw a boxplot of the distances to centroid for each group
-boxplot(mod)
+glmer_all_0 <- glmer(cbind(total_non_native, total_native) ~ (1|Site_ID), family = "binomial", data = data_MH_all_summary)
+glmer_all_fit <- glmer(cbind(total_non_native, total_native) ~ dist_km + (1|Site_ID), family = "binomial", data = data_MH_all_summary)
+
+summary(glmer_0)
+summary(glmer_fit)
+
+## model with the fixed effect of distance has the lower AIC value and the majority of the weight
+AICtab(glmer_0, glmer_fit, weights = T)
+
+plot(x=data_MH_all_summary$dist_km, y = data_MH_all_summary$non_native_binom)
+MyData =data.frame(cbind(dist_km = seq(from = min(data_MH_all_summary$dist_km), to = max(data_MH_all_summary$dist_km, length.out = nrow(data_MH_all_summary))),
+                         Site_ID = seq(from = min(data_MH_all_summary$dist_km), to = max(data_MH_all_summary$dist_km, length.out = nrow(data_MH_all_summary)))))
+Pred <- predict(glmer_fit, newdata = MyData, type = "response", allow.new.levels=T)
+lines(MyData$dist_km, Pred)
+
+## make this in ggplot
+
+pd <-with(data_MH_all_summary,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_summary$dist_km), max(data_MH_all_summary$dist_km), length.out = nrow(data_MH_all_summary))),
+                     Site_ID = seq(min(data_MH_all_summary$dist_km), max(data_MH_all_summary$dist_km), length.out = nrow(data_MH_all_summary))))
+
+pd1 <- cbind(pd, predict(glmer_fit, newdata=pd, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(glmer_fit, newdata = pd, type = "response", allow.new.levels = T)`)
+
+
+## binomial model fit to presence/absence of any non-native ant sp found in pitfall trap
+ggplot(data_MH_all_summary, aes((dist_km), non_native_binom))+
+  geom_point(position = position_jitter(width =.02, height = 0.02), alpha = .6)+
+  geom_line(data = pd1, aes(x = dist_km_x, y = fit_y))+
+  theme_classic()+
+  labs(x = "Distance to edge of preserve (km)",
+       y = "Probability of non-native ant species present")
+
+anova(glmer_fit, test="Chisq")
+
+##### visualize and test for relationship between the to dominant non-native ants and distance to edge
+data_MH_pit_invasives <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% 
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0,
+         Species == "Nylanderia fulva" |
+           Species == "Solenopsis invicta") %>% 
+  left_join(GIS_select) %>% 
+  mutate(dist_km = (DistanceToEdgeOfPreserve/1000))
+
+
+ggplot(data_MH_pit_invasives,aes(dist_km, abundance))+
+  geom_point(aes(color = Species))+
+  theme_classic()
+
+
+## combining across collection methods doesn't affect presence/absence probability of presence, but greatly increases the abundances
+
