@@ -942,10 +942,11 @@ data_MH_all <- data_MH_clean %>%
   #filter(`Collection Method` == "Pit") %>% 
   gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
   left_join(native_classification, by = "Species") %>% 
-  filter(abundance != 0) 
+  filter(abundance != 0) ## have to drop species that weren't found in the trap, since this is based on sp occurrence
+  ## that is pooled at the Replicate level within site codes
 
-data_MH_all_summary <- data_MH_pit %>% 
-  group_by(Site, `Specific Site Number`, Site_Code, Replicate) %>% 
+data_MH_all_summary <- data_MH_all %>% 
+  group_by(Site, `Specific Site Number`, Site_Code, Replicate, `Collection Method`) %>% 
   summarize(total_species = length(Species),
             total_native = sum(Native),
             total_non_native = total_species-total_native,
@@ -958,7 +959,7 @@ data_MH_all_summary <- data_MH_pit %>%
 
 library(lme4)
 
-## Binomial model of presence of non-native ant sp in pitfall trap by distance to preserve edge (Random effect of SITE)
+## Binomial model of presence of non-native ant sp in all trap types by distance to preserve edge (Random effect of SITE)
 ## could also do model fitting
 
 glmer_all_0 <- glmer(cbind(total_non_native, total_native) ~ (1|Site_ID), family = "binomial", data = data_MH_all_summary)
@@ -987,6 +988,15 @@ pd1 <- cbind(pd, predict(glmer_fit, newdata=pd, type = "response", allow.new.lev
 
 
 ## binomial model fit to presence/absence of any non-native ant sp found in pitfall trap
+ggplot(data_MH_all_summary, aes((dist_km), non_native_binom), color = `Collection Method`)+
+  geom_point(aes(color = `Collection Method`),position = position_jitter(width =.02, height = 0.02), alpha = .6)+
+  geom_line(data = pd1, aes(x = dist_km_x, y = fit_y))+
+  theme_classic()+
+  labs(x = "Distance to edge of preserve (km)",
+       y = "Probability of non-native ant species present")
+
+## comfortable with the spread of the different collection methods across the distance to edge,
+## and occurrence of non-native ant spp
 ggplot(data_MH_all_summary, aes((dist_km), non_native_binom))+
   geom_point(position = position_jitter(width =.02, height = 0.02), alpha = .6)+
   geom_line(data = pd1, aes(x = dist_km_x, y = fit_y))+
@@ -997,21 +1007,100 @@ ggplot(data_MH_all_summary, aes((dist_km), non_native_binom))+
 anova(glmer_fit, test="Chisq")
 
 ##### visualize and test for relationship between the to dominant non-native ants and distance to edge
-data_MH_pit_invasives <- data_MH_clean %>% 
-  #filter(`Collection Method` == "Pit") %>% 
+data_MH_all_invasives <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% All collection methods
   gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
   left_join(native_classification, by = "Species") %>% 
-  filter(abundance != 0,
+  filter(#abundance != 0, ## keeping in samples for which we did not observe the two spp of interest
          Species == "Nylanderia fulva" |
            Species == "Solenopsis invicta") %>% 
   left_join(GIS_select) %>% 
-  mutate(dist_km = (DistanceToEdgeOfPreserve/1000))
+  filter(DistanceToEdgeOfPreserve != "NA") %>% 
+  mutate(Site_ID = `Specific Site Number`,
+         dist_km = (DistanceToEdgeOfPreserve/1000))
 
+lmer_inv_0 <- lmer(abundance ~ (1|Site_ID), data = data_MH_all_invasives, REML=F)
+lmer_inv_fit <- lmer(abundance ~ dist_km + (1|Site_ID), data = data_MH_all_invasives, REML=F)
+
+summary(lmer_inv_0)
+summary(lmer_inv_fit)
+
+## model with the fixed effect of distance has the lower AIC value and the majority of the weight
+AICtab(lmer_inv_0, lmer_inv_fit, weights = T)
+
+
+pd_inv <-with(data_MH_all_invasives,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_invasives$dist_km), max(data_MH_all_invasives$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))),
+                     Site_ID = seq(min(data_MH_all_invasives$dist_km), max(data_MH_all_invasives$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))))
+
+pd1_inv <- cbind(pd_inv, predict(lmer_inv_fit, newdata=pd_inv, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(lmer_inv_fit, newdata = pd_inv, type = "response", allow.new.levels = T)`)
+
+
+
+## similar trend across collection methods -- OK to "pool" 
+ggplot(data_MH_pit_invasives,aes(dist_km, abundance))+
+  geom_point(aes(color = Species, shape = `Collection Method`))+
+  geom_line(data = pd1_inv, aes(x = dist_km, y = fit_y))+
+  #geom_smooth(method = "lm", se=F) ## nearly identical fit to our estimate with random effects of site
+  theme_classic()
 
 ggplot(data_MH_pit_invasives,aes(dist_km, abundance))+
   geom_point(aes(color = Species))+
-  theme_classic()
+  theme_classic()+
+  geom_smooth(method = "lm", se=F)
+
+## combining across collection methods doesn't affect presence/absence probability of presence,
+## but it does greatly increases the abundances
+
+##### visualize and test for relationship between the to dominant non-native ants and distance to edge
+data_MH_all_invasives_no_zero <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% All collection methods
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0, ## drop instances where we did not observe species
+    Species == "Nylanderia fulva" |
+      Species == "Solenopsis invicta") %>% 
+  left_join(GIS_select) %>% 
+  filter(DistanceToEdgeOfPreserve != "NA") %>% 
+  mutate(Site_ID = `Specific Site Number`,
+    dist_km = (DistanceToEdgeOfPreserve/1000)) ## convert to km since glmer is having trouble with the scale of the data
+
+lmer_inv_0 <- lm(abundance ~ (1), data = data_MH_all_invasives_no_zero)
+lmer_inv_fit <- lm(abundance ~ dist_km, data = data_MH_all_invasives_no_zero)
+##^^ getting an error message "boundary (singular)" means variance is basically = 0 -- not fitting well
+summary(lmer_inv_0)
+summary(lmer_inv_fit)
+
+## model with the random effect has the lower AIC value and the majority of the weight -- go with modelt hat includes zeros
+AICtab(lmer_inv_0, lmer_inv_fit, weights = T)
+
+#anova(lmer_inv_0, lmer_inv_fit)
+
+plot(x=data_MH_all_invasives_no_zero$dist_km, y = data_MH_all_invasives_no_zero$abundance)
+MyData =data.frame(cbind(dist_km = seq(from = min(data_MH_all_invasives_no_zero$dist_km), to = max(data_MH_all_invasives_no_zero$dist_km, length.out = nrow(data_MH_all_summary))),
+                         Site_ID = seq(from = min(data_MH_all_invasives_no_zero$dist_km), to = max(data_MH_all_invasives_no_zero$dist_km, length.out = nrow(data_MH_all_summary)))))
+Pred <- predict(lmer_inv_fit, newdata = MyData, type = "response", allow.new.levels=T)
+lines(MyData$dist_km, Pred)
+
+## make this in ggplot
+
+pd <-with(data_MH_all_invasives_no_zero,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_invasives_no_zero$dist_km), max(data_MH_all_invasives_no_zero$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))),
+                     Site_ID = seq(min(data_MH_all_invasives_no_zero$dist_km), max(data_MH_all_invasives_no_zero$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))))
+
+pd1 <- cbind(pd, predict(glmer_fit, newdata=pd, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(glmer_fit, newdata = pd, type = "response", allow.new.levels = T)`)
 
 
-## combining across collection methods doesn't affect presence/absence probability of presence, but greatly increases the abundances
+## similar trend across collection methods -- OK to "pool" 
+ggplot(data_MH_pit_invasives_no_zero,aes(dist_km, abundance))+
+  geom_point(aes(color = Species, shape = `Collection Method`))+
+  theme_classic()+
+  geom_smooth(method = "lm", se=F)+
+  facet_grid(~`Collection Method`)
 
+ggplot(data_MH_pit_invasives_no_zero,aes(dist_km, abundance))+
+  geom_point(aes(color = Species))+
+  theme_classic()+
+  geom_smooth(method = "lm", se=F)
