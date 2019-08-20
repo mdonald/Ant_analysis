@@ -245,7 +245,9 @@ rank_abu_fig <- ggplot(rank_abu_P.flav.native, aes(x=rank, y = abundance, label=
   geom_text(aes(label=ifelse(abundance>100,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = T)+
   scale_color_manual(values = c("#F1BB7B","#5B1A18","#055864","#04C0DD", "gray49"))+
   scale_shape_manual(values = c(16, 16))+
-  theme(legend.position = "hide")
+  theme(legend.position = "hide",
+        legend.key = element_blank(),
+        legend.background=element_blank())
 
 ## Pheidole flavens complex as Native for rank abundance
 rank_abu_P.flav.non.native <- rank_abu_df2 %>% 
@@ -264,7 +266,9 @@ rank_abu_NN_fig <- ggplot(rank_abu_P.flav.non.native, aes(x=rank, y = abundance,
   geom_text(aes(label=ifelse(abundance>100,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = T)+
   scale_color_manual(values = c("#F1BB7B","#5B1A18", "#055864","#04C0DD", "gray49"))+
   scale_shape_manual(values = c(16, 16))+
-  theme(legend.position = "hide")
+  theme(legend.position = "hide",
+        legend.key = element_blank(),
+        legend.background=element_blank())
 
 ```
 
@@ -272,11 +276,11 @@ rank_abu_NN_fig <- ggplot(rank_abu_P.flav.non.native, aes(x=rank, y = abundance,
 ## Rank abundance curves
 
 ```{r rank abu figs, echo = F, fig.width=6, fig.height=3, warning=F}
-legend_native_class <- get_legend(rank_abu_fig + theme(legend.position="bottom"))
+legend_native_class <- get_legend(rank_abu_fig + theme(legend.position="bottom", legend.key = element_blank(), legend.background=element_blank()))
 
 rank_abu_figs <- plot_grid(rank_abu_fig, rank_abu_NN_fig,  labels = "auto")
 
-plot_grid( rank_abu_figs, legend_native_class, ncol = 1, rel_heights = c(1, .05))
+plot_grid( rank_abu_figs, legend_native_class, ncol = 1, rel_heights = c(1, .04))
 ```
 
 To visualize the evenness and relative abundance of the species, we created rank abundance curves. In these two figures, *Pheidole flavens* complex is classified as (a) a native species and (b) a non-native species. (*Scott, I think it makes sense to only show one of these. So depending on how P. flavens is classified, we can use the corresponding figure.*)
