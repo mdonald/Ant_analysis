@@ -856,7 +856,7 @@ plot_grid(nmds_season, nmds_year, ncol=2, label ="auto")
 ```
 
 Visualization of the ant communities (using a bray-curtis dissimilarity matrix). Each point represents the pooled community across pitfall traps within each site. Colors represent (a) seasons and (b) years. 
-We can use PERMANOVA analyses to test whether ant community composition varied between seasons and years. PERMANOVA tests for differences in the locations of multivariate groups. We used the adonis function of vegan. As we had repeated community measures within site, we constrained permuatations to witin sites (using the "strata" argument). We included season and year as fixed effects in the models. These analyses confirmed that season had a significant effect on community composition and explained approximately 5% of the variation (R2 = 0.055)
+We can use PERMANOVA analyses to test whether ant community composition varied between seasons and years. PERMANOVA tests for differences in the locations of multivariate groups. We used the adonis function of vegan. As we had repeated community measures within site, we constrained permutations to within sites (using the "strata" argument). We included season and year as fixed effects in the models. These analyses confirmed that season had a significant effect on community composition and explained approximately 5% of the variation (R2 = 0.055)
 ```{r permanova test, echo = F, warning=F}
 perm <- adonis(dist_BC ~ Season*Year, data = data_GZ_clean_subset_2, strata = data_GZ_clean_subset_2$Site)
 
@@ -1038,7 +1038,7 @@ dist_edge_fig_non_natives <-ggplot(data_MH_all_invasives,aes(dist_km, abundance)
   scale_color_manual(values = c("tan", "steelblue4"))+
   theme_classic()+
   #theme(legend.position = "bottom")+
-  labs(x = "Distance to preseve boundary (km)",
+  labs(x = "Distance to preserve boundary (km)",
        y = "Ant abundance")
   #geom_smooth(method = "lm", se=F)
 
@@ -1115,5 +1115,5 @@ Here, each point represents the abundance of *N. fulva* (tan) or *S. invicta* (b
 
 ## Next steps
 - Decide whether to classify *P. falvens* complex as native or non-native.
-- Decide whether it makes more sense to present alpha diversity indices based on *occurrence* or *abundance*. (*I think abundance makes more sense, since the Shannon and Simpson indicies are abundance based*).
+- Decide whether it makes more sense to present alpha diversity indices based on *occurrence* or *abundance*. (*I think abundance makes more sense, since the Shannon and Simpson indices are abundance based*).
 
