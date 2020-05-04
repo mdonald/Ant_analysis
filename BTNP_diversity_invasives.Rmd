@@ -1,0 +1,1632 @@
+---
+title: "Big Thicket Ant Analysis"
+author: "Marion Donald"
+date: "12/3/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center")
+library(knitr)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(vegan)
+library(ggplot2)
+library(BiodiversityR)
+library(extrafont)
+library(ggpubr)
+library(broom)
+library(gridExtra)
+library(cowplot)
+library(ggpubr)
+library(wesanderson)
+library(bbmle)
+library(lme4)
+```
+
+
+```{r load data, echo = F, warning = F}
+
+data_MH <- read_excel("Meghan Hager Big Thicket Ant Data Updated 07-22-19 (1).xlsx")
+
+data_GZ_all <- read_excel("big_thicket_ants20142018.xlsx", sheet = "Pitfall Data")
+
+native_classification <- read.csv("ant_species_native_classification.csv") 
+
+## GIS dataframe created by Meghan
+GIS_df <- read_excel("BIG THICKET GIS DATA 4-6-2016.xlsx", sheet="Sheet1")
+
+```
+
+
+```{r data clean up, echo = F, warning=F}
+data_MH_2 <- data_MH %>% 
+  filter(`Collection Method` == "Pit") %>% ## select just the pitfall trap data
+  select("Aphenogaster carolinensis":"Trachymyrmex septentrionalis") ## select just the species names
+
+## since MH data doesn't have as many species names as GZ data, we need to add these columns in, in order to merge the two dfs
+
+## get list of species from GZ 
+data_GZ_species <- data_GZ_all %>% 
+  filter(Genus != "NA") %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) ## finding out that there are some data frame issues -- some of the species names are capitalized while others are not
+## this is resulting in duplicates
+
+data_GZ_clean <- data_GZ_all %>% 
+  filter(Year == 2014 | ## pull out just the two years of Gabriela's data
+           Year == 2015,
+         Genus != "NA") %>% 
+  mutate(Species = ifelse(Species == "Carolinensis", "carolinensis", ## correct the species names (mispellings and uppercase-to-lowercase)
+                          ifelse(Species == "Depilis", "depilis", 
+                                 ifelse(Species == "Patagonicus", "patagonicus",
+                                        ifelse(Species == "Castaneus", "castaneus",
+                                               ifelse(Species == "pennsylanicus" | Species == "Pennsylvanicus" | Species == "pennsylvancius", "pennsylvanicus", 
+                                                      ifelse(Species == "ashmeadii", "ashmeadi", 
+                                                             ifelse(Species == "Rimosus", "rimosus",
+                                                                    ifelse(Species == "Opacior", "opacior",
+                                                                           ifelse(Species == "Coecus", "coecus", 
+                                                                                  ifelse(Species == "Americana", "americana", 
+                                                                                         ifelse(Species == "fasionensis", "faisonensis", 
+                                                                                                ifelse(Species == "Fulva", "fulva",
+                                                                                                       ifelse(Species == "Harpax", "harpax",
+                                                                                                              ifelse(Species == "Dentata", "dentata",
+                                                                                                                     ifelse(Species == "Dentigula", "dentigula",
+                                                                                                                            ifelse(Species == "Metallescens", "metallescens",
+                                                                                                                                   ifelse(Species == "Invicta", "invicta", 
+                                                                                                                                          ifelse(Species == "Molesta", "molesta",
+                                                                                                                                                 ifelse(Species == "Louisianae", "louisianae", Species))))))))))))))))))),
+         Genus = ifelse(Genus == "Pachydondyla", "Pachycondyla", Genus))
+
+data_GZ_clean_sp_check <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  filter(Genus != "NA") %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  spread("species", "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum) %>% 
+  gather(species, Abundance)
+
+
+data_GZ_clean_sp <- data_GZ_clean_sp_check %>% 
+  ungroup() %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) 
+
+
+
+## check species names in MH data **** THERE ARE SPELLING MISTAKES HERE
+data_MH_clean <- data_MH %>% 
+  rename("Aphaenogaster carolinensis" = 'Aphenogaster carolinensis',
+         "Aphaenogaster texana" = "Aphenogaster texana",
+         "Hypoponera opaciceps" = "Hyponera opaciceps",
+         "Cyphomyrmex rimosus" = "Cyphomyrmex rimosous")
+
+data_MH_sp <- data_MH_clean %>% 
+  gather("Aphaenogaster carolinensis":"Trachymyrmex septentrionalis", key = "Species", value = "Abundance") %>% 
+  select(Species) %>% 
+  distinct(Species) %>% 
+  arrange(Species) %>% 
+  rename(species = Species)
+
+full_sp_list <- full_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## this is the full species list across the two datasets (but including all data from 2014-2018)
+
+
+
+
+data_GZ_wide_alpha <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  # group_by(species) %>% 
+  #  mutate(grouped_id = row_number()) %>% 
+  spread(key = "species", value = "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) ## make all the NAs under the species names zeros (for this analysis) 
+
+
+
+## find the species that are in MH that we need to add to this df in order to merge them
+missing_GZ_alpha <- anti_join(data_MH_sp, data_GZ_clean_sp, by = "species") ## 5 species that are in MH that need to be added to GZ
+
+data_GZ_wide2_alpha <- data_GZ_wide_alpha %>% 
+  mutate("Aphaenogaster texana" = 0,
+         "Brachymyrmex patagonicus" = 0,
+         "Nylanderia terricola" = 0,
+         "Pheidole moerens" = 0,
+         "Prenolepis imparis" = 0)
+
+#missing_MH_alpha <- anti_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## 14 spp that are in GZ that need to be added to MH
+# 
+# data_MH_2a_alpha <- data_MH_clean %>% 
+#   mutate("Aphaenogaster rudis-fulva-texana complex" = 0,
+#          "Aphaenogaster treatae" = 0,
+#          "Brachymyrmex depilis" = 0,
+#          "Crematogaster ashmeadi" = 0,
+#          "Crematogaster lineolata" = 0,
+#          "Crematogaster minutissima" = 0,
+#          "Crematogaster sp" = 0,
+#          "Hypoponera opacior" = 0,
+#          "Labidus coecus" = 0,
+#          "Pheidole flavens complex" = 0,
+#          "Pheidole sp" = 0, 
+#          "Pseudomyrmex pallidus" = 0, 
+#          "Solenopsis nickersoni" = 0, 
+#          "Tapinoma sessile" = 0) %>% 
+#   select("Aphaenogaster carolinensis":"Tapinoma sessile",
+#          -Site_Code, -`Inside or Outside (Inside=1)`) %>% 
+#   mutate(Year = 2015)
+
+
+
+
+
+
+
+
+
+
+data_MH_2 <- data_MH %>% 
+  filter(`Collection Method` == "Pit") %>% ## select just the pitfall trap data
+  select("Aphenogaster carolinensis":"Trachymyrmex septentrionalis") ## select just the species names
+
+## since MH data doesn't have as many species names as GZ data, we need to add these columns in, in order to merge the two dfs
+
+## get list of species from GZ 
+data_GZ_species <- data_GZ_all %>% 
+                   filter(Genus != "NA") %>% 
+                   unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) ## finding out that there are some data frame issues -- some of the species names are capitalized while others are not
+## this is resulting in duplicates
+
+data_GZ_clean <- data_GZ_all %>% 
+  filter(Year == 2014 | ## pull out just the two years of Gabriela's data
+           Year == 2015,
+         Genus != "NA") %>% 
+  mutate(Species = ifelse(Species == "Carolinensis", "carolinensis", ## correct the species names (mispellings and uppercase-to-lowercase)
+                          ifelse(Species == "Depilis", "depilis", 
+                          ifelse(Species == "Patagonicus", "patagonicus",
+                          ifelse(Species == "Castaneus", "castaneus",
+                          ifelse(Species == "pennsylanicus" | Species == "Pennsylvanicus" | Species == "pennsylvancius", "pennsylvanicus", 
+                          ifelse(Species == "ashmeadii", "ashmeadi", 
+                          ifelse(Species == "Rimosus", "rimosus",
+                          ifelse(Species == "Opacior", "opacior",
+                          ifelse(Species == "Coecus", "coecus", 
+                          ifelse(Species == "Americana", "americana", 
+                          ifelse(Species == "fasionensis", "faisonensis", 
+                          ifelse(Species == "Fulva", "fulva",
+                          ifelse(Species == "Harpax", "harpax",
+                          ifelse(Species == "Dentata", "dentata",
+                          ifelse(Species == "Dentigula", "dentigula",
+                          ifelse(Species == "Metallescens", "metallescens",
+                          ifelse(Species == "Invicta", "invicta", 
+                          ifelse(Species == "Molesta", "molesta",
+                          ifelse(Species == "Louisianae", "louisianae", Species))))))))))))))))))),
+         Genus = ifelse(Genus == "Pachydondyla", "Pachycondyla", Genus))
+
+data_GZ_clean_sp_check <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  filter(Genus != "NA") %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  spread("species", "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum) %>% 
+  gather(species, Abundance)
+  
+  
+data_GZ_clean_sp <- data_GZ_clean_sp_check %>% 
+  ungroup() %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) 
+
+
+
+## check species names in MH data **** THERE ARE SPELLING MISTAKES HERE
+data_MH_clean <- data_MH %>% 
+  rename("Aphaenogaster carolinensis" = 'Aphenogaster carolinensis',
+         "Aphaenogaster texana" = "Aphenogaster texana",
+         "Hypoponera opaciceps" = "Hyponera opaciceps",
+         "Cyphomyrmex rimosus" = "Cyphomyrmex rimosous")
+
+data_MH_sp <- data_MH_clean %>% 
+  gather("Aphaenogaster carolinensis":"Trachymyrmex septentrionalis", key = "Species", value = "Abundance") %>% 
+  select(Species) %>% 
+  distinct(Species) %>% 
+  arrange(Species) %>% 
+  rename(species = Species)
+
+full_sp_list <- full_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## this is the full species list across the two datasets (but including all data from 2014-2018)
+```
+
+```{r species accumulation curve, echo = F, warning =F}
+
+#### data set up for species accumulation curve
+##  transform to wide df for species accumulation curve 
+
+data_GZ_wide <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
+    unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  # group_by(species) %>% 
+  #  mutate(grouped_id = row_number()) %>% 
+  spread(key = "species", value = "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>%  ## make all the NAs under the species names zeros (for this analysis) 
+  select(-Site:-Month) ## drop the identifiers and just keep the species names and Year
+
+
+## find the species that are in MH that we need to add to this df in order to merge them
+missing_GZ <- anti_join(data_MH_sp, data_GZ_clean_sp, by = "species") ## 5 species that are in MH that need to be added to GZ
+
+data_GZ_wide2 <- data_GZ_wide %>% 
+                mutate("Aphaenogaster texana" = 0,
+                       "Brachymyrmex patagonicus" = 0,
+                       "Nylanderia terricola" = 0,
+                       "Pheidole moerens" = 0,
+                       "Prenolepis imparis" = 0)
+
+missing_MH <- anti_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## 14 spp that are in GZ that need to be added to MH
+
+data_MH_2a <- data_MH_clean %>% 
+  mutate("Aphaenogaster rudis-fulva-texana complex" = 0,
+         "Aphaenogaster treatae" = 0,
+         "Brachymyrmex depilis" = 0,
+         "Crematogaster ashmeadi" = 0,
+         "Crematogaster lineolata" = 0,
+         "Crematogaster minutissima" = 0,
+         "Crematogaster sp" = 0,
+         "Hypoponera opacior" = 0,
+         "Labidus coecus" = 0,
+         "Pheidole flavens complex" = 0,
+         "Pheidole sp" = 0, 
+         "Pseudomyrmex pallidus" = 0, 
+         "Solenopsis nickersoni" = 0, 
+         "Tapinoma sessile" = 0) %>% 
+  select("Aphaenogaster carolinensis":"Tapinoma sessile",
+         -Site_Code, -`Inside or Outside (Inside=1)`) %>% 
+  mutate(Year = 2015)
+
+data_spacc_all <- data_MH_2a %>% 
+  bind_rows(data_GZ_wide2) %>% 
+  mutate(`Pheidole flavens complex` = `Pheidole flavens complex` + `Pheidole moerens`) %>% ## combining P. moerens since it can't be reliably identified from P. flavens complex
+  select(-`Pheidole moerens`) ## drop P. moerens now that it's been combined with P. flavens
+
+
+data_spacc_year <- data_spacc_all %>% 
+                  select(Year)
+
+data_spacc <- data_spacc_all %>% 
+              select(-Year) # drop year, just keep the species by site matrix
+curve <- specaccum(data_spacc, method = "random")
+
+pitfalls <- as.data.frame(curve$sites)
+richness <- as.data.frame(curve$richness)
+sd <- as.data.frame(curve$sd)
+
+spacc_df <- pitfalls %>% 
+  bind_cols(richness, sd) %>% 
+  dplyr::rename(sites = `curve$sites`, 
+         richness = `curve$richness`,
+         sd = `curve$sd`)
+
+sp_accumulation_curve <- ggplot(spacc_df, aes(sites, richness))+
+  geom_point(alpha = .5)+
+  geom_ribbon(aes(x = sites, ymin = richness-sd, ymax = richness+sd), alpha = 0.2)+
+  theme_classic()+
+  labs(x = "Number of pitfall traps",
+       y = "Species richness")+
+  xlim(c(0, 410))
+
+## Chao estimated (36 species observed, ~42 +/- 6 species predicted by Chao, 42 predicted by jack1 +/- 2)
+richness_est_df <- vegan::specpool(data_spacc)
+```
+## Species accumulation curve richness estimates
+```{r species accumulation figure, echo = F,fig.width = 3.5, fig.height=2.5, fig.align = "center"}
+sp_accumulation_curve
+
+# Species accumulation curve from 381 pitfall traps, collected by Gabriela and Meghan. Here, we used the function 'specaccum' from the vegan package in R, which estimates the number of species for a given number of sampled sites. Richness estimates are shown as points with +/- the standard deviation as the shaded ribbon.
+# We then extrapolated the number of unobserved species, using the function 'specpool' from the vegan package in R. We compared this estimate of unobserved species with the number of observed species to determine the efficacy of our sampling. 
+```
+Fig 1
+
+```{r richness estimates, echo =F}
+kable(richness_est_df)
+```
+
+We observed 36 species across the two years of the study, with an estimated total number of species present in this area to be approximately 42 +/- 6 species based on a Chao1 estimate (vegan R-package).
+
+```{r rank abundance, echo = F, warning = F}
+
+## rank abundance data frame
+data_rank_abundance <- data_spacc_all %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Tapinoma sessile`), sum) %>% 
+  gather(species, abundance) %>% 
+  arrange(-abundance) %>% 
+  rownames_to_column(var = "rank") %>% 
+  mutate(rank = as.numeric(rank))
+
+## native classification df to merge (native = 1, invasive = 0)
+native_info <- native_classification %>% 
+  rename(species = "Species") %>% 
+  mutate(species = as.character(species))
+
+
+rank_abu_df2 <- data_rank_abundance  %>% 
+  full_join(native_info, by = "species") %>% 
+  mutate(Native = as.character(Native))
+         
+
+## Pheidole flavens complex as non-native 
+rank_abu_P.flav.non.native <- rank_abu_df2 %>% 
+  mutate(Native = ifelse(species == "Pheidole flavens complex", 0, Native),
+         Classification = ifelse(Native == 1, "native", "non-native")) 
+
+
+
+## Rank abundance curve with Pheidole flavens complex as non-native (NN) (0)
+rank_abu_NN_fig <- ggplot(rank_abu_P.flav.non.native, aes(x=rank, y = abundance, label=species))+
+  geom_point(aes(color = Classification, shape = Classification), size = 4)+
+  geom_line()+
+  theme_classic()+
+  labs(x = "Species rank",
+       y = "Abundance")+
+  geom_text(aes(label=ifelse(abundance>100,as.character(species),'')),hjust=-0.08,vjust=0, check_overlap = T)+
+  scale_color_manual(values = c("#F1BB7B","#5B1A18", "#055864","#04C0DD", "gray49"))+
+  scale_shape_manual(values = c(16, 16))+
+  theme(legend.position = "hide",
+        legend.key = element_blank(),
+        legend.background=element_blank())
+
+```
+
+
+## Rank abundance curves
+
+```{r rank abu figs, echo = F, fig.width=4, fig.height=3, warning=F}
+rank_abu_NN_fig
+```
+
+Fig 2. We used a rank abundance curve to visualize the evenness and relative abundance of native (tan) and invasive (maroon) species. *Need to get the name next to S. molesta.* (These are data from both Gabriela and Meghan.)
+
+## Alpha and Beta diversity from Gabriela's pitfall data -- grouped by Site, Year, and Month
+
+```{r alpha diversity, echo = F, warning = F}
+data_MH_2 <- data_MH %>% 
+  filter(`Collection Method` == "Pit") %>% ## select just the pitfall trap data
+  select("Aphenogaster carolinensis":"Trachymyrmex septentrionalis") ## select just the species names
+
+## since MH data doesn't have as many species names as GZ data, we need to add these columns in, in order to merge the two dfs
+
+## get list of species from GZ 
+data_GZ_species <- data_GZ_all %>% 
+  filter(Genus != "NA") %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) ## finding out that there are some data frame issues -- some of the species names are capitalized while others are not
+## this is resulting in duplicates
+
+data_GZ_clean <- data_GZ_all %>% 
+  filter(Year == 2014 | ## pull out just the two years of Gabriela's data
+           Year == 2015,
+         Genus != "NA") %>% 
+  mutate(Species = ifelse(Species == "Carolinensis", "carolinensis", ## correct the species names (mispellings and uppercase-to-lowercase)
+                          ifelse(Species == "Depilis", "depilis", 
+                                 ifelse(Species == "Patagonicus", "patagonicus",
+                                        ifelse(Species == "Castaneus", "castaneus",
+                                               ifelse(Species == "pennsylanicus" | Species == "Pennsylvanicus" | Species == "pennsylvancius", "pennsylvanicus", 
+                                                      ifelse(Species == "ashmeadii", "ashmeadi", 
+                                                             ifelse(Species == "Rimosus", "rimosus",
+                                                                    ifelse(Species == "Opacior", "opacior",
+                                                                           ifelse(Species == "Coecus", "coecus", 
+                                                                                  ifelse(Species == "Americana", "americana", 
+                                                                                         ifelse(Species == "fasionensis", "faisonensis", 
+                                                                                                ifelse(Species == "Fulva", "fulva",
+                                                                                                       ifelse(Species == "Harpax", "harpax",
+                                                                                                              ifelse(Species == "Dentata", "dentata",
+                                                                                                                     ifelse(Species == "Dentigula", "dentigula",
+                                                                                                                            ifelse(Species == "Metallescens", "metallescens",
+                                                                                                                                   ifelse(Species == "Invicta", "invicta", 
+                                                                                                                                          ifelse(Species == "Molesta", "molesta",
+                                                                                                                                                 ifelse(Species == "Louisianae", "louisianae", Species))))))))))))))))))),
+         Genus = ifelse(Genus == "Pachydondyla", "Pachycondyla", Genus))
+
+data_GZ_clean_sp_check <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  filter(Genus != "NA") %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  spread("species", "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum) %>% 
+  gather(species, Abundance)
+
+
+data_GZ_clean_sp <- data_GZ_clean_sp_check %>% 
+  ungroup() %>% 
+  select(species) %>% 
+  distinct(species) %>% 
+  arrange(species) 
+
+
+
+## check species names in MH data **** THERE ARE SPELLING MISTAKES HERE
+data_MH_clean <- data_MH %>% 
+  rename("Aphaenogaster carolinensis" = 'Aphenogaster carolinensis',
+         "Aphaenogaster texana" = "Aphenogaster texana",
+         "Hypoponera opaciceps" = "Hyponera opaciceps",
+         "Cyphomyrmex rimosus" = "Cyphomyrmex rimosous")
+
+data_MH_sp <- data_MH_clean %>% 
+  gather("Aphaenogaster carolinensis":"Trachymyrmex septentrionalis", key = "Species", value = "Abundance") %>% 
+  select(Species) %>% 
+  distinct(Species) %>% 
+  arrange(Species) %>% 
+  rename(species = Species)
+
+full_sp_list <- full_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## this is the full species list across the two datasets (but including all data from 2014-2018)
+
+
+
+
+data_GZ_wide_alpha <- data_GZ_clean %>% 
+  filter(Abundance != "NA") %>% 
+  select(Year, Site, Station, Month, Genus, Species, Abundance) %>% 
+  unite("species", c("Genus", "Species"), remove = T, sep = " ") %>% 
+  # group_by(species) %>% 
+  #  mutate(grouped_id = row_number()) %>% 
+  spread(key = "species", value = "Abundance") %>% 
+  mutate_all(~replace(., is.na(.), 0)) ## make all the NAs under the species names zeros (for this analysis) 
+
+
+
+## find the species that are in MH that we need to add to this df in order to merge them
+missing_GZ_alpha <- anti_join(data_MH_sp, data_GZ_clean_sp, by = "species") ## 5 species that are in MH that need to be added to GZ
+
+data_GZ_wide2_alpha <- data_GZ_wide_alpha %>% 
+  mutate("Aphaenogaster texana" = 0,
+         "Brachymyrmex patagonicus" = 0,
+         "Nylanderia terricola" = 0,
+         "Pheidole moerens" = 0,
+         "Prenolepis imparis" = 0)
+
+#missing_MH_alpha <- anti_join(data_GZ_clean_sp, data_MH_sp, by = "species") ## 14 spp that are in GZ that need to be added to MH
+# 
+# data_MH_2a_alpha <- data_MH_clean %>% 
+#   mutate("Aphaenogaster rudis-fulva-texana complex" = 0,
+#          "Aphaenogaster treatae" = 0,
+#          "Brachymyrmex depilis" = 0,
+#          "Crematogaster ashmeadi" = 0,
+#          "Crematogaster lineolata" = 0,
+#          "Crematogaster minutissima" = 0,
+#          "Crematogaster sp" = 0,
+#          "Hypoponera opacior" = 0,
+#          "Labidus coecus" = 0,
+#          "Pheidole flavens complex" = 0,
+#          "Pheidole sp" = 0, 
+#          "Pseudomyrmex pallidus" = 0, 
+#          "Solenopsis nickersoni" = 0, 
+#          "Tapinoma sessile" = 0) %>% 
+#   select("Aphaenogaster carolinensis":"Tapinoma sessile",
+#          -Site_Code, -`Inside or Outside (Inside=1)`) %>% 
+#   mutate(Year = 2015)
+
+
+
+## group pitfalls within site (combining Stations A-E)
+GZ_pitfall_grouped <- data_GZ_wide2_alpha %>% 
+  select(-Station) %>% 
+  group_by(Year, Month, Site) %>% 
+  summarise_all(lst(sum)) 
+
+
+## there are no empty rows
+drop_empty_rows <- GZ_pitfall_grouped %>% 
+  ungroup() %>% 
+  mutate(Total = select(.,`Aphaenogaster carolinensis_sum`:`Prenolepis imparis_sum`) %>% rowSums(na.rm = TRUE)) %>% 
+  filter(Total == 0)
+  
+
+GZ_pitfall_div_df <- GZ_pitfall_grouped %>% 
+  ungroup() %>% 
+  select(-Year,-Site, -Month) 
+
+
+## diversity measures
+shannon_div_alpha <- diversity(GZ_pitfall_div_df, "shannon")
+
+shannon_div_df_alpha <- as.data.frame(shannon_div_alpha) %>% 
+  bind_cols(GZ_pitfall_grouped) %>% 
+  mutate(invader = ifelse(`Nylanderia fulva_sum` > 1 & `Solenopsis invicta_sum` > 1, "Both",
+                          ifelse(`Nylanderia fulva_sum` > 1, "N. fulva",
+                          ifelse(`Solenopsis invicta_sum` > 1, "S. invicta", "Other")))) %>% 
+  mutate(Total = select(., `Aphaenogaster carolinensis_sum`:`Prenolepis imparis_sum`) %>% rowSums(na.rm = TRUE))
+
+## there is one site in which there are both N. fulva and S. invicta (Site 101 station B)
+shannon_div_df_alpha %>% 
+  filter(`Nylanderia fulva_sum` > 1 & `Solenopsis invicta_sum` > 1) %>% 
+  select(Year, Month, Site, `Nylanderia fulva_sum`, `Solenopsis invicta_sum`, shannon_div_alpha)
+
+N_fulva_alpha_Shan_plot <- ggplot(shannon_div_df_alpha, aes(x = `Nylanderia fulva_sum`/Total, y = shannon_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of N. fulva",
+       y = "Shannon diversity index")
+
+
+S_invicta_alpha_Shan_plot <- ggplot(shannon_div_df_alpha, aes(x = `Solenopsis invicta_sum`/Total, y = shannon_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth()+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of S. invicta",
+       y = "Shannon diversity index")
+## simpson div - no difference in alpha diversity across the years
+simpson_div_alpha <- diversity(GZ_pitfall_div_df, "simpson")
+
+simpson_div_df_alpha <- as.data.frame(simpson_div_alpha) %>% 
+  bind_cols(shannon_div_df_alpha)
+
+N_fulva_alpha_Simp_plot <- ggplot(simpson_div_df_alpha, aes(x = `Nylanderia fulva_sum`/Total, y = simpson_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of N. fulva",
+       y = "Simpson diversity index")
+
+
+S_invicta_alpha_Simp_plot <- ggplot(simpson_div_df_alpha, aes(x = `Solenopsis invicta_sum`/Total, y = simpson_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth()+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of S. invicta",
+       y = "Simpson diversity index")
+
+```
+
+```{r alpha figs proportion continuous, echo = F, fig.width=6, fig.height=6, warning=F}
+
+alpha_figs <- plot_grid(N_fulva_alpha_Shan_plot, 
+                           N_fulva_alpha_Simp_plot,
+                           S_invicta_alpha_Shan_plot,
+                           S_invicta_alpha_Simp_plot, labels = "auto")
+
+alpha_figs
+```
+
+Fig 3. Shannon and Simpson alpha diversity indices in response to the proportion of *N. fulva* (a and b) and *S. invicta* (c and d). Linear and loess trend lines were fit to the data. *N. fulva* proportions bin pretty clearly between low and high. Alpha diversity has a more humped shaped relationship with the proportion of *S. invicta*. (Just Gabriela's data)
+
+```{r alpha diversity cont., echo = F, warning = F}
+tidy_df_alpha <- simpson_div_df_alpha %>% 
+  pivot_longer(-c(Year:Total), names_to = "diversity_type", values_to = "diversity_measure" )  %>% 
+  mutate(diversity_type = case_when(diversity_type == "shannon_div_alpha" ~ "Shannon diversity index",
+                                    diversity_type == "simpson_div_alpha" ~ "Simpson diversity index")) %>% 
+  mutate(category_Sinvicta = ifelse(`Solenopsis invicta_sum`/Total < .25, "0-.25", 
+                                    ifelse(`Solenopsis invicta_sum`/Total > .251 & `Solenopsis invicta_sum`/Total < .5, ".25-.5",
+                                           ifelse(`Solenopsis invicta_sum`/Total > .51 & `Solenopsis invicta_sum`/Total < .75, ".5-.75", ".75-1"))),
+         category_Nfulva = ifelse(`Nylanderia fulva_sum`/Total < .25, "0-.25", 
+                                  ifelse(`Nylanderia fulva_sum`/Total > .251 & `Nylanderia fulva_sum`/Total < .5, ".25-.5",
+                                         ifelse(`Nylanderia fulva_sum`/Total > .51 & `Nylanderia fulva_sum`/Total < .75, ".5-.75", ".75-1"))))
+
+tidy_df_alpha$category_Sinvicta <- factor(tidy_df_alpha$category_Sinvicta, levels = c("0-.25", ".25-.5", ".5-.75", ".75-1"))
+
+
+tidy_df_alpha$category_Nfulva <- factor(tidy_df_alpha$category_Nfulva, levels = c("0-.25", ".25-.5", ".5-.75", ".75-1"))
+
+## need to use Tukey post-hoc HSD test
+
+S.invicta_alpha_boxplot <- ggplot(tidy_df_alpha, aes(category_Sinvicta, diversity_measure, fill = category_Sinvicta))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+  stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "Proportion of S. invicta")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+
+N.fulva_alpha_boxplot <- ggplot(tidy_df_alpha, aes(category_Nfulva, diversity_measure, fill = category_Nfulva))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+  stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "Proportion of N. fulva")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+```
+
+```{r alpha figs proportion boxplot , echo = F, fig.width=6.5, fig.height=3, warning=F}
+
+# alpha_figs_proportion_boxplot <- plot_grid(N.fulva_alpha_boxplot +
+#                                              theme(legend.position = "hide"), 
+#                            S.invicta_alpha_boxplot +
+#                              theme(legend.position = "hide"), labels = "auto")
+# 
+# alpha_figs_proportion_boxplot
+
+N.fulva_alpha_boxplot+
+  theme(legend.position = "hide")
+
+S.invicta_alpha_boxplot+
+  theme(legend.position = "hide")
+
+```
+Figs 4-5. I think it's easier to see the pattern of reduced alpha diversity with the proportion of *N. fulva* and the peak of alpha diversity at intermediate proportion of *S. fulva* when the proportions are binned. (*Need to switch the colors, because their meaning ends up getting mixed up later on.)
+
+```{r alpha diversity cont. pt2.2, echo = F, warning = F}
+grouped_alpha <- tidy_df_alpha %>% 
+  filter(invader != "Both") ## drop the site that has both S. invicta and N. fulva
+
+invasives_boxplot_alpha <- ggplot(grouped_alpha, aes(invader, diversity_measure, fill = invader))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+  stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+tidy_df_alpha %>% 
+  filter(invader == "Both",
+           diversity_type == "Shannon diversity index") %>% 
+  select(Year, Month, Site, `Nylanderia fulva_sum`, `Solenopsis invicta_sum`)
+
+```
+
+```{r alpha figs by invasive boxplot2.1, echo = F, fig.width=6, fig.height=3, warning=F}
+
+invasives_boxplot_alpha+
+  theme(legend.position = "hide")
+```
+
+Fig 6. Alpha diversity indicies (Shannon and Simpson) binned by whether or not *N. fulva* or *S. invicta* is present. Makes it easy to see that *N. fulva* sites have the lowest alpha diversity, while sites with *S. invicta* or neither of these ant species have similar alpha diversity. There was one station that had both of these species (Site 101 in May 2014 - 41 *N. fulva* and 3 *S. invicta*). This site was dropped from this analysis and the following beta diversity analyses.
+
+
+
+
+## NMDS visualization and beta diversity
+
+```{r nmds set up 2.0, echo=FALSE, include = F}
+
+### NMDS figs
+
+
+## Next step is to pull just Gabriela's data and look at year to year trends + seasonality in species composition
+## using ordination (nMDS or PCoA and PERMANOVA + permdist)
+data_NMDS <- grouped_alpha %>% 
+  filter(diversity_type == "Shannon diversity index") %>%
+  select(-Site, -Year, -c(invader:category_Nfulva))
+
+meta_data_NMDS <-  grouped_alpha %>% 
+  filter(diversity_type == "Shannon diversity index")
+
+
+
+# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
+dist_jac <- vegdist(data_NMDS, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
+dist_BC <- vegdist(data_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
+
+# Then generate an MDS object using metaMDS(): ### hooray!! it converges and stress is 0.1719
+mds <- metaMDS(dist_BC, trymax = 300)
+
+# Plot the mds using basic graphics
+plot(mds)
+
+# Make this into a ggplot:
+# Extract the coordinates:
+points <- as.data.frame(mds$points)
+points
+
+# Add metadata to the points:
+data_NMDS_metadata<- meta_data_NMDS %>% 
+  #select(-drop_these) %>% 
+  bind_cols(points)
+
+NMDS_invader_plot_1 <- ggplot(data = data_NMDS_metadata, aes(x = MDS1, y = MDS2))+
+  geom_point(aes(color = invader), size = 3)+
+ # stat_ellipse(aes(color = (invader)))+
+  #scale_color_manual(values = c("darkgray", "black"))+
+   scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(x = "NMDS1",
+       y = "NMDS2")+
+  theme_classic()+
+  theme(legend.position = "bottom", legend.title = element_blank())
+
+```
+
+```{r NMDS Month, Year, Site by invasive, echo = F, fig.width=4, fig.height=4, warning=F}
+NMDS_invader_plot_1
+```
+
+Fig 7. Visualization of the ant communities (using a Bray-Curtis dissimilarity matrix and k = 2). Each point represents the pooled community
+across pitfall traps within each site for each sampling period (Spring and Fall) within each year (2014 and 2015). *N. fulva* communities (tan) pull apart from the communities with *S. invicta* and neither *N. fulva* or *S. invicta*. While *S. invicta* communities appear to be similar in composition to communities with neither *N. fulva* or *S. invicta*.
+
+```{r nmds set up 2.1, echo=FALSE, include = F}
+#Visualization of the ant communities (using a bray-curtis dissimilarity matrix). Each point represents the pooled community across pitfall traps within each site. Colors represent (a) seasons and (b) years. 
+#We can use PERMANOVA analyses to test whether ant community composition varied between presence of N. fulva, S. invicta or neither of these species. PERMANOVA tests for differences in the locations of multivariate groups. We used the adonis function of vegan. As we had repeated community measures within site, we constrained permutations to within sites (using the "strata" argument). We included season and year as fixed effects in the models. These analyses confirmed that season had a significant effect on community composition and explained approximately 5% of the variation ($R^2$ = 0.055)
+
+
+perm <- adonis(dist_BC ~ invader+Year, data = data_NMDS_metadata, strata = data_NMDS_metadata$Site)
+
+perm
+
+adon.results_df<-as.data.frame(perm$aov.tab)
+
+## Composition in ant community affected by seasonality but not by year
+
+```
+
+```{r table permanova, echo = F, warning = F}
+kable(adon.results_df)
+```
+
+Invasive species identity and absence significantly affects ant community composition (p = 0.001, $R^2$ = 0.208), while collection year was not a significant predictor of ant community composition (p = 0.263, $R^2$ = 0.0151).
+
+
+```{r dispersion year, month, site invasive, echo=FALSE, include = F}
+## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
+
+group <- data_NMDS_metadata$invader
+## Calculate multivariate dispersions
+mod <- betadisper(dist_BC, group)
+mod
+
+## Perform test
+anova(mod)
+
+## Permutation test for F
+permutest(mod, pairwise = T)
+
+## Tukey's Honest Significant Differences -- v. signficicant for the difference between N. fulva comms and S. invicta and other.
+(mod.HSD <- TukeyHSD(mod))
+plot(mod.HSD)
+
+## Plot the groups and distances to centroids on the
+## first two PCoA axes
+plot(mod)
+
+## Draw a boxplot of the distances to centroid for each group
+boxplot(mod)
+
+df <- data.frame(Distance_to_centroid=mod$distances,Group=mod$group)
+groups <- mod$group
+
+
+
+fm1 <- aov(Distance_to_centroid ~ group, data = df)
+res <- TukeyHSD(fm1, "group", ordered = TRUE)
+beta_df_res <- as.data.frame(res$group)
+## N. fulva has the lowest beta diversity - S. invicta and the other communities have similar beta diversities 
+
+```
+
+```{r beta div boxplot invader (grouped by Year, Month, Site), echo = F, fig.width=4, fig.height=4, warning=F}
+
+ggplot(data=df,aes(x=group,y=Distance_to_centroid,fill = group))+
+  geom_boxplot() +
+  geom_jitter()+
+  #scale_x_discrete(limits=c("Spring","Fall"))+
+  #scale_fill_manual(values = c("darkgray", "black"))+
+   scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  theme_classic()+
+  labs(y = "Distance to centroid",
+       x = "")+
+  theme(legend.position = "none") 
+
+
+
+```
+
+
+
+```{r table beta div month, year, site, invader, echo = F, warning = F}
+kable(beta_df_res)
+```
+
+Fig 8. Beta diversity (distance to centroid) tends to be lower for ant communities with *N. fulva* compared to communities with either *S. invicta* or neither of these ant species. However, these results were not statistically significant based on a post-hoc Tukey HSD test (see table above).
+
+## Alpha and Beta diversity from Gabriela's pitfall data -- grouped by Site and Year 
+Combining months in this next version
+
+```{r nmds set up 2.2  grouped by site, echo=FALSE, include = F}
+######################################
+#####################################
+######### GROUP BY JUST SITE
+
+## group pitfalls within site (combining Stations A-E)
+GZ_pitfall_grouped <- data_GZ_wide2_alpha %>% 
+  select(-Station) %>% 
+  group_by(Year, Site) %>% 
+  summarise_all(lst(sum)) 
+
+
+## there are no empty rows
+drop_empty_rows <- GZ_pitfall_grouped %>% 
+  ungroup() %>% 
+  mutate(Total = select(.,`Aphaenogaster carolinensis_sum`:`Prenolepis imparis_sum`) %>% rowSums(na.rm = TRUE)) %>% 
+  filter(Total == 0)
+
+
+GZ_pitfall_div_df <- GZ_pitfall_grouped %>% 
+  ungroup() %>% 
+  select(-Year,-Site) 
+
+
+## diversity measures
+shannon_div_alpha <- diversity(GZ_pitfall_div_df, "shannon")
+
+shannon_div_df_alpha <- as.data.frame(shannon_div_alpha) %>% 
+  bind_cols(GZ_pitfall_grouped) %>% 
+  mutate(invader = ifelse(`Nylanderia fulva_sum` > 1 & `Solenopsis invicta_sum` > 1, "Both",
+                          ifelse(`Nylanderia fulva_sum` > 1, "N. fulva",
+                                 ifelse(`Solenopsis invicta_sum` > 1, "S. invicta", "Other")))) %>% 
+  mutate(Total = select(., `Aphaenogaster carolinensis_sum`:`Prenolepis imparis_sum`) %>% rowSums(na.rm = TRUE))
+
+## there is one site in which there are both N. fulva and S. invicta (Site 101 station B)
+shannon_div_df_alpha %>% 
+  filter(`Nylanderia fulva_sum` > 1 & `Solenopsis invicta_sum` > 1)
+
+N_fulva_alpha_Shan_plot_Site <- ggplot(shannon_div_df_alpha, aes(x = `Nylanderia fulva_sum`/Total, y = shannon_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of N. fulva",
+       y = "Shannon diversity index")
+
+
+N_fulva_alpha_Simp_plot_Site <- ggplot(shannon_div_df_alpha, aes(x = `Solenopsis invicta_sum`/Total, y = shannon_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth()+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Number of S. invicta",
+       y = "Shannon diversity index")
+## simpson div - no difference in alpha diversity across the years
+simpson_div_alpha <- diversity(GZ_pitfall_div_df, "simpson")
+
+simpson_div_df_alpha <- as.data.frame(simpson_div_alpha) %>% 
+  bind_cols(shannon_div_df_alpha)
+
+S_invicta_alpha_Shan_plot_Site <- ggplot(simpson_div_df_alpha, aes(x = `Nylanderia fulva_sum`/Total, y = simpson_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Proportion of N. fulva",
+       y = "Simpson diversity index")
+
+
+S_invicta_alpha_Simp_plot_Site <- ggplot(simpson_div_df_alpha, aes(x = `Solenopsis invicta_sum`/Total, y = simpson_div_alpha))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth()+
+  geom_smooth(method = "lm", formula = y ~ (x))+
+  theme_classic()+
+  labs(x = "Number of S. invicta",
+       y = "Simpson diversity index")
+```
+
+```{r alpha figs proportion continuous grouped by Site, echo = F, fig.width=6, fig.height=3, warning=F}
+
+alpha_figs_Site <- plot_grid(N_fulva_alpha_Shan_plot_Site, 
+                           S_invicta_alpha_Shan_plot_Site,
+                            N_fulva_alpha_Simp_plot_Site,
+                           S_invicta_alpha_Simp_plot_Site, labels = "auto")
+
+alpha_figs_Site
+```
+Fig 9. Similar to what we saw before, but now the hump shaped response for alpha diversity and *S. invicta* isn't as pronounced.
+
+```{r alpha diversity cont. grouped by Site, echo = F, warning = F}
+
+tidy_df_alpha <- simpson_div_df_alpha %>% 
+  pivot_longer(-c(Year:Total), names_to = "diversity_type", values_to = "diversity_measure" )  %>% 
+  mutate(diversity_type = case_when(diversity_type == "shannon_div_alpha" ~ "Shannon diversity index",
+                                    diversity_type == "simpson_div_alpha" ~ "Simpson diversity index")) %>% 
+  mutate(category_Sinvicta = ifelse(`Solenopsis invicta_sum`/Total < .25, "0-.25", 
+                                    ifelse(`Solenopsis invicta_sum`/Total > .251 & `Solenopsis invicta_sum`/Total < .5, ".25-.5",
+                                           ifelse(`Solenopsis invicta_sum`/Total > .51 & `Solenopsis invicta_sum`/Total < .75, ".5-.75", ".75-1"))),
+         category_Nfulva = ifelse(`Nylanderia fulva_sum`/Total < .25, "0-.25", 
+                                  ifelse(`Nylanderia fulva_sum`/Total > .251 & `Nylanderia fulva_sum`/Total < .5, ".25-.5",
+                                         ifelse(`Nylanderia fulva_sum`/Total > .51 & `Nylanderia fulva_sum`/Total < .75, ".5-.75", ".75-1"))))
+
+tidy_df_alpha$category_Sinvicta <- factor(tidy_df_alpha$category_Sinvicta, levels = c("0-.25", ".25-.5", ".5-.75", ".75-1"))
+
+
+tidy_df_alpha$category_Nfulva <- factor(tidy_df_alpha$category_Nfulva, levels = c("0-.25", ".25-.5", ".5-.75", ".75-1"))
+
+## need to use Tukey post-hoc HSD test
+
+S.invicta_alpha_boxplot_Site <- ggplot(tidy_df_alpha, aes(category_Sinvicta, diversity_measure, fill = category_Sinvicta))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+ # stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "Proportion of S. invicta")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+
+N.fulva_alpha_boxplot_Site <- ggplot(tidy_df_alpha, aes(category_Nfulva, diversity_measure, fill = category_Nfulva))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+ # stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "Proportion of N. fulva")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+```
+
+```{r alpha figs proportion boxplot Site , echo = F, fig.width=6, fig.height=3, warning=F}
+
+#alpha_figs_proportion_boxplot_Site <- plot_grid(N.fulva_alpha_boxplot_Site +
+ #                                            theme(legend.position = "hide"), 
+  #                         S.invicta_alpha_boxplot_Site +
+   #                          theme(legend.position = "hide"), labels = "auto")
+
+N.fulva_alpha_boxplot_Site+
+  theme(legend.position = "hide")
+S.invicta_alpha_boxplot_Site+
+  theme(legend.position = "hide")
+```
+
+Fig 10. Alpha diversity tends to decrease with increasing proportions of *N. fulva* and *S. invicta* (but now we have very few points for medium to high proportions of these ants).
+
+```{r alpha diversity cont. pt2.1, echo = F, warning = F}
+
+grouped_alpha <- tidy_df_alpha %>% 
+  filter(invader != "Both") ## drop the site that has both S. invicta and N. fulva
+
+invasives_boxplot_alpha_Site <- ggplot(grouped_alpha, aes(invader, diversity_measure, fill = invader))+
+  geom_boxplot(position =position_dodge())+
+  geom_point(position = position_jitterdodge(0.25), alpha = .75)+
+  #stat_compare_means()+
+  # stat_compare_means(comparisons = my_comparisons, aes(label = ..p.signif..))+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Alpha diversity",
+       x = "")+
+  theme_classic()+
+  theme(#text = element_text(family = "Times New Roman", size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank())+
+  facet_wrap(diversity_type~., scales="free_y")
+
+```
+
+```{r alpha figs by invasive boxplot 2.2, echo = F, fig.width=4, fig.height=4, warning=F}
+
+invasives_boxplot_alpha_Site+
+  theme(legend.position ="hide")
+```
+
+Fig 11. Think this figure is nice as it's clear that *N. fulva* communities have the lowest alpha diversity, while *S. invita* communities are similar to those that don't have either of these two species. Think this figure works better to be qualitative - since with only two points for *N. fulva* communities we don't have much power to say a lot.
+
+
+### NMDS visualization and beta diversity 
+
+```{r nmds set up by Site and Year, echo=FALSE, include = F}
+
+## Next step is to pull just Gabriela's data and look at year to year trends + seasonality in species composition
+## using ordination (nMDS or PCoA and PERMANOVA + permdist)
+data_NMDS <- grouped_alpha %>% 
+  filter(diversity_type == "Shannon diversity index") %>%
+  select(-Site, -Year, -c(invader:category_Nfulva))
+
+meta_data_NMDS <-  grouped_alpha %>% 
+  filter(diversity_type == "Shannon diversity index")
+
+
+
+# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
+dist_jac <- vegdist(data_NMDS, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
+dist_BC <- vegdist(data_NMDS, method = "bray")#, binary = TRUE) # Bray-Curtis distance
+
+# Then generate an MDS object using metaMDS(): ### hooray!! it converges and stress is 0.1719
+mds <- metaMDS(dist_BC, trymax = 300)
+
+# Plot the mds using basic graphics
+plot(mds)
+
+# Make this into a ggplot:
+# Extract the coordinates:
+points <- as.data.frame(mds$points)
+points
+
+# Add metadata to the points:
+data_NMDS_metadata<- meta_data_NMDS %>% 
+  #select(-drop_these) %>% 
+  bind_cols(points)
+
+NMDS_invader_plot_2 <- ggplot(data = data_NMDS_metadata, aes(x = MDS1, y = MDS2))+
+  geom_point(aes(color = invader), size = 3)+
+  # stat_ellipse(aes(color = (invader)))+
+  #scale_color_manual(values = c("darkgray", "black"))+
+  labs(x = "NMDS1",
+       y = "NMDS2")+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  theme_classic()+
+  theme(legend.position = "bottom")
+
+```
+
+```{r NMDS Year, Site by invasive, echo = F, fig.width=4, fig.height=4, warning=F}
+#NMDS_invader_plot_2
+```
+
+
+```{r table permanova by Site and Year, echo = F, warning = F}
+
+perm <- adonis(dist_BC ~ invader+Year, data = data_NMDS_metadata, strata = data_NMDS_metadata$Site)
+
+
+adon.results_df2<-as.data.frame(perm$aov.tab)
+
+## Composition in ant community affected by seasonality but not by year
+kable(adon.results_df2)
+```
+
+
+
+
+
+```{r beta div grouped by site, echo=FALSE, include = F}
+## check for homogeneity in dispersion - if there is, it may invalidate the PERMANOVA sp. composition results
+
+group <- data_NMDS_metadata$invader
+## Calculate multivariate dispersions
+mod <- betadisper(dist_BC, group)
+mod
+
+## Perform test
+anova(mod)
+
+## Permutation test for F
+permutest(mod, pairwise = T)
+
+## Tukey's Honest Significant Differences -- v. signficicant for the difference between N. fulva comms and S. invicta and other.
+(mod.HSD <- TukeyHSD(mod))
+plot(mod.HSD)
+
+## Plot the groups and distances to centroids on the
+## first two PCoA axes
+plot(mod)
+
+## Draw a boxplot of the distances to centroid for each group
+boxplot(mod)
+
+df <- data.frame(Distance_to_centroid=mod$distances,Group=mod$group)
+groups <- mod$group
+
+
+
+fm1 <- aov(Distance_to_centroid ~ group, data = df)
+res <- TukeyHSD(fm1, "group", ordered = TRUE)
+beta_df_res2 <- as.data.frame(res$group)
+## N. fulva has the lowest beta diversity - S. invicta and the other communities have similar beta diversities 
+
+
+
+beta_disp_invader_Site <- ggplot(data=df,aes(x=group,y=Distance_to_centroid,fill = group))+
+  geom_boxplot() +
+  geom_jitter()+
+  #scale_x_discrete(limits=c("Spring","Fall"))+
+  #scale_fill_manual(values = c("darkgray", "black"))+
+  theme_classic()+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(y = "Distance to centroid")+
+  theme(legend.position = "none") 
+
+
+```
+
+```{r beta div invasive boxplot Stie , echo = F, fig.width=6, fig.height=4, warning=F}
+
+beta_invader_Site_plots <- plot_grid(NMDS_invader_plot_2, 
+                           beta_disp_invader_Site, labels = "auto")
+
+beta_invader_Site_plots
+
+```
+
+Beta diversity table by invader
+```{r table beta div year, site, invader, echo = F, warning = F}
+kable(beta_df_res2)
+```
+
+Fig 12. (a) NMDS visualization (k=2) of ant communities. Invasive species identity and absence significantly affects ant community composition (p = 0.044, $R^2$ = 0.269), as does collection year (p = 0.008, $R^2$ = 0.089), but to a lesser extent as it only explains approximately 9% of the variance while invader identity explains nearly 27%.
+(b) Beta diversity (distance to centroid) is significantly lower for ant communities with *N. fulva* compared to communities with either *S. invicta* (Tukey post-hoc HSD p = 0.048) or neither of these ant species (Tukey post-hoc HSD p = 0.013. While *S. invicta* communities and communities with neither of these ant species had similar beta diversities (Tukey post-hoc HSD p = 0.387). This indicates that ant communities with *N. fulva* are more similar in species composition than are communities with out *N. fulva*. (N.B. only have two data points here but they cluster together and are super separate from the other classifications, so I think this is a valid interpretation.)
+
+```{r distance to edge set up, echo = F, include = F}
+## GIS dataframe created by Meghan
+GIS_select <- GIS_df %>% 
+  select(Site_Code, DistanceToEdgeOfPreserve)
+
+data_MH_all <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% 
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0) ## have to drop species that weren't found in the trap, since this is based on sp occurrence
+  ## that is pooled at the Replicate level within site codes
+
+data_MH_all_summary <- data_MH_all %>% 
+  group_by(Site, `Specific Site Number`, Site_Code, Replicate, `Collection Method`) %>% 
+  summarize(total_species = length(Species),
+            total_native = sum(Native),
+            total_non_native = total_species-total_native,
+            prop_non_native = total_non_native/total_species) %>%
+  mutate(non_native_binom = ifelse(total_non_native >0, 1, 0)) %>% 
+  left_join(GIS_select) %>% 
+  mutate(Site_ID = `Specific Site Number`,
+         dist_km = (DistanceToEdgeOfPreserve/1000)) %>% ## convert to km since glmer is having trouble with the scale of the data
+filter(dist_km != "NA")
+
+
+## Binomial model of presence of non-native ant sp in all trap types by distance to preserve edge (Random effect of SITE)
+## could also do model fitting
+
+glmer_all_0 <- glmer(cbind(total_non_native, total_native) ~ (1|Site_ID), family = "binomial", data = data_MH_all_summary)
+glmer_all_fit <- glmer(cbind(total_non_native, total_native) ~ dist_km + (1|Site_ID), family = "binomial", data = data_MH_all_summary)
+
+summary(glmer_all_0)
+summary(glmer_all_fit)
+
+## model with the fixed effect of distance + random effect has the lower AIC value and the majority of the weight
+AICtab(glmer_all_0, glmer_all_fit, weights = T)
+anova(glmer_all_0, glmer_all_fit, test="Chisq")
+
+plot(x=data_MH_all_summary$dist_km, y = data_MH_all_summary$non_native_binom)
+MyData =data.frame(cbind(dist_km = seq(from = min(data_MH_all_summary$dist_km), to = max(data_MH_all_summary$dist_km, length.out = nrow(data_MH_all_summary))),
+                         Site_ID = seq(from = min(data_MH_all_summary$dist_km), to = max(data_MH_all_summary$dist_km, length.out = nrow(data_MH_all_summary)))))
+Pred <- predict(glmer_all_fit, newdata = MyData, type = "response", allow.new.levels=T)
+lines(MyData$dist_km, Pred)
+
+## make this in ggplot
+
+pd <-with(data_MH_all_summary,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_summary$dist_km), max(data_MH_all_summary$dist_km), length.out = nrow(data_MH_all_summary))),
+                     Site_ID = seq(min(data_MH_all_summary$dist_km), max(data_MH_all_summary$dist_km), length.out = nrow(data_MH_all_summary))))
+
+pd1 <- cbind(pd, predict(glmer_all_fit, newdata=pd, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(glmer_all_fit, newdata = pd, type = "response", allow.new.levels = T)`)
+
+
+## binomial model fit to presence/absence of any non-native ant sp found in pitfall trap
+fig_binom<- ggplot(data_MH_all_summary, aes((dist_km), non_native_binom), shape = `Collection Method`)+
+  geom_point(aes(shape = `Collection Method`),position = position_jitter(width =.02, height = 0.02), alpha = .6)+
+  geom_line(data = pd1, aes(x = dist_km, y = fit_y))+
+  theme_classic()+
+  labs(x = "Distance to edge of preserve (km)",
+       y = "Probability of non-native ant species present")
+
+## comfortable with the spread of the different collection methods across the distance to edge,
+## and occurrence of non-native ant spp
+ggplot(data_MH_all_summary, aes((dist_km), non_native_binom))+
+  geom_point(position = position_jitter(width =.02, height = 0.02), alpha = .6)+
+  geom_line(data = pd1, aes(x = dist_km, y = fit_y))+
+  theme_classic()+
+  labs(x = "Distance to edge of preserve (km)",
+       y = "Probability of non-native ant species present")
+
+
+
+##### visualize and test for relationship between the to dominant non-native ants and distance to edge
+data_MH_all_invasives <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% All collection methods
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(#abundance != 0, ## keeping in samples for which we did not observe the two spp of interest
+         Species == "Nylanderia fulva" |
+           Species == "Solenopsis invicta") %>% 
+  left_join(GIS_select) %>% 
+  filter(DistanceToEdgeOfPreserve != "NA") %>% 
+  mutate(Site_ID = `Specific Site Number`,
+         dist_km = (DistanceToEdgeOfPreserve/1000))
+
+lmer_inv_0 <- lmer(abundance ~ (1|Site_ID), data = data_MH_all_invasives, REML=F)
+lmer_inv_fit <- lmer(abundance ~ dist_km + (1|Site_ID), data = data_MH_all_invasives, REML=F)
+
+summary(lmer_inv_0)
+summary(lmer_inv_fit)
+
+library(MuMIn)
+
+r.squaredGLMM(lmer_inv_fit)
+
+## model with the fixed effect of distance has the lower AIC value and the majority of the weight
+AICtab(lmer_inv_0, lmer_inv_fit, weights = T)
+dist_edge_lmer <- anova(lmer_inv_0, lmer_inv_fit, test="Chisq")
+
+pd_inv <-with(data_MH_all_invasives,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_invasives$dist_km), max(data_MH_all_invasives$dist_km), length.out = nrow(data_MH_all_invasives))),
+                     Site_ID = seq(min(data_MH_all_invasives$dist_km), max(data_MH_all_invasives$dist_km), length.out = nrow(data_MH_all_invasives))))
+
+pd1_inv <- cbind(pd_inv, predict(lmer_inv_fit, newdata=pd_inv, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(lmer_inv_fit, newdata = pd_inv, type = "response", allow.new.levels = T)`)
+
+
+
+## similar trend across collection methods -- OK to "pool" 
+ggplot(data_MH_all_invasives,aes(dist_km, abundance))+
+  geom_point(aes(color = Species, shape = `Collection Method`))+
+  geom_line(data = pd1_inv, aes(x = dist_km, y = fit_y))+
+  #geom_smooth(method = "lm", se=F) ## nearly identical fit to our estimate with random effects of site
+  theme_classic()
+
+dist_edge_fig_non_natives <-ggplot(data_MH_all_invasives,aes(dist_km, log(abundance)))+
+  geom_jitter(aes(color = Species, shape = `Collection Method`), width = 0.05, height = 1, alpha = .75, size =2.5)+
+    geom_line(data = pd1_inv, aes(x = dist_km, y = fit_y))+
+  scale_color_manual(values = c("tan", "steelblue4"))+
+  theme_classic()+
+  #theme(legend.position = "bottom")+
+  labs(x = "Distance to preserve boundary (km)",
+       y = "log(Ant abundance)")+
+  facet_wrap(Site~.)
+  #geom_smooth(method = "lm", se=F)
+
+## combining across collection methods doesn't affect presence/absence probability of presence,
+## but it does greatly increases the abundances
+
+##### visualize and test for relationship between the to dominant non-native ants and distance to edge
+data_MH_all_invasives_no_zero <- data_MH_clean %>% 
+  #filter(`Collection Method` == "Pit") %>% All collection methods
+  gather("Species", "abundance", -c(Site:`Collector (1=SES)`,Site_Code, `Inside or Outside (Inside=1)`)) %>% 
+  left_join(native_classification, by = "Species") %>% 
+  filter(abundance != 0, ## drop instances where we did not observe species
+    Species == "Nylanderia fulva" |
+      Species == "Solenopsis invicta") %>% 
+  left_join(GIS_select) %>% 
+  filter(DistanceToEdgeOfPreserve != "NA") %>% 
+  mutate(Site_ID = `Specific Site Number`,
+    dist_km = (DistanceToEdgeOfPreserve/1000)) ## convert to km since glmer is having trouble with the scale of the data
+
+lmer_inv_0 <- lm(abundance ~ (1), data = data_MH_all_invasives_no_zero)
+lmer_inv_fit <- lm(abundance ~ dist_km, data = data_MH_all_invasives_no_zero)
+##^^ getting an error message "boundary (singular)" means variance is basically = 0 -- not fitting well
+summary(lmer_inv_0)
+summary(lmer_inv_fit)
+
+## model with the random effect has the lower AIC value and the majority of the weight -- go with model that includes zeros
+AICtab(lmer_inv_0, lmer_inv_fit, weights = T)
+anova(lmer_inv_0, lmer_inv_fit)
+
+plot(x=data_MH_all_invasives_no_zero$dist_km, y = data_MH_all_invasives_no_zero$abundance)
+MyData =data.frame(cbind(dist_km = seq(from = min(data_MH_all_invasives_no_zero$dist_km), to = max(data_MH_all_invasives_no_zero$dist_km, length.out = nrow(data_MH_all_summary))),
+                         Site_ID = seq(from = min(data_MH_all_invasives_no_zero$dist_km), to = max(data_MH_all_invasives_no_zero$dist_km, length.out = nrow(data_MH_all_summary)))))
+Pred <- predict(lmer_inv_fit, newdata = MyData, type = "response", allow.new.levels=T)
+lines(MyData$dist_km, Pred)
+
+## make this in ggplot
+
+pd <-with(data_MH_all_invasives_no_zero,
+          data.frame(cbind(dist_km = seq(min(data_MH_all_invasives_no_zero$dist_km), max(data_MH_all_invasives_no_zero$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))),
+                     Site_ID = seq(min(data_MH_all_invasives_no_zero$dist_km), max(data_MH_all_invasives_no_zero$dist_km), length.out = nrow(data_MH_all_invasives_no_zero))))
+
+pd1 <- cbind(pd, predict(lmer_inv_fit, newdata=pd, type = "response", allow.new.levels = T)) %>% 
+  rename(fit_y = `predict(lmer_inv_fit, newdata = pd, type = "response", allow.new.levels = T)`)
+
+
+## similar trend across collection methods -- OK to "pool" 
+ggplot(data_MH_all_invasives_no_zero,aes(dist_km, abundance))+
+  geom_point(aes(color = Species, shape = `Collection Method`))+
+  theme_classic()+
+  geom_smooth(method = "lm", se=F)+
+  facet_grid(~`Collection Method`)
+
+ggplot(data_MH_all_invasives_no_zero,aes(dist_km, abundance))+
+  geom_point(aes(color = Species))+
+  theme_classic()+
+  geom_smooth(method = "lm", se=F)
+```
+
+## Probability of non-native ants decreases within the preserve
+```{r dist to edge binom fig, echo = F, warning = F, fig.height=4, fig.width = 4}
+fig_binom+
+  theme(legend.position = "bottom")
+anova_glmer_binom <- anova(glmer_all_0, glmer_all_fit, test="Chisq")
+```
+
+```{r table, echo = F, warning = F}
+kable(anova_glmer_binom)
+```
+
+
+Fig 13. Each point represents whether or not a non-native ant species was detected in the sample, shapes represent the method of collection (Hand = circles, Pitfall traps = triangles, and Winkler = squares). The fitted line is the Binomial model estimates for the probability of the presence of a non-native ant species within the trap. This was an improved fit with site as a random effect and distance to preserve edge compared to that of the intercept with the random effect of site.  
+
+## Abundances of *S. invicta* and *N fulva* at each collection site
+
+```{r dist to edge fig, echo = F, warning = F, fig.height =2.5, fig.width = 5}
+dist_edge_fig_non_natives
+```
+
+```{r dist to edge table, echo = F, warning = F}
+kable(dist_edge_lmer)
+```
+
+
+Fig 14. Here, each point represents the abundance of *N. fulva* (tan) or *S. invicta* (blue) by collection method (Hand = circles, Pitfall traps = triangles, Winkler = squares) at a given sampling site that is some distance (km) to the nearest preserve boundary. The line is the best fit regression ($R^2$ = .026) with site as a random effect and distance to edge as a fixed effect. However, this was only a slight improvement over the null model (intercept and site as a random effect). (*To me, this suggests that distance to edge of preserve is not a strong predictor of abundances of these two ant species and that this is most likely due to the high number of zeros and very low abundances in the data set. I think we could cut this figure and just include the stronger result (above) from the binomial model.*)
+
+
+```{r distance to edge set up for alpha diversity, echo = F, include = F}
+data_MH_alpha <- data_MH_clean %>% 
+  group_by(Site, Site_Code) %>% 
+  select(Site, Site_Code, `Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`) %>% 
+    summarize_at(vars(`Aphaenogaster carolinensis`:`Trachymyrmex septentrionalis`), sum)
+
+drop_empty_rows <- data_MH_alpha %>% 
+  ungroup() %>% 
+  mutate(Total = select(.,`Aphaenogaster carolinensis`:`Prenolepis imparis`) %>% rowSums(na.rm = TRUE)) %>% 
+  filter(Total == 0)
+
+## there's one Site_Code that doesn't have any ants LR6 -- drop this
+
+data_MH_alpha_select <- data_MH_alpha %>% 
+  filter(Site_Code != "LR6") %>% 
+  filter(Site_Code != "BSB3") ## drop the one site that doesn't have a distance measure
+  
+
+
+MH_alpha_div_df <- data_MH_alpha_select %>% 
+  ungroup() %>% 
+  select(-Site, -Site_Code) 
+
+
+## diversity measures
+MH_shannon_div_alpha <- diversity(MH_alpha_div_df, "shannon")
+
+MH_shannon_div_df_alpha <- as.data.frame(MH_shannon_div_alpha) %>% 
+  bind_cols(data_MH_alpha_select) %>% 
+  mutate(invader = ifelse(`Nylanderia fulva` > 1 & `Solenopsis invicta` > 1, "Both",
+                          ifelse(`Nylanderia fulva` > 1, "N. fulva",
+                          ifelse(`Solenopsis invicta` > 1, "S. invicta", "Other")))) %>% 
+  mutate(Total = select(., `Aphaenogaster carolinensis`:`Prenolepis imparis`) %>% rowSums(na.rm = TRUE)) %>% 
+  left_join(GIS_select, by = "Site_Code") %>% 
+  mutate(dist_km = (DistanceToEdgeOfPreserve/1000))
+
+## there are no sites where both N. fulva and S. invicta are present
+MH_shannon_div_df_alpha %>% 
+  #filter(`Nylanderia fulva` > 1 & `Solenopsis invicta` > 1) %>% 
+  filter(invader == "Both") %>% 
+  select(Site, Site_Code, `Nylanderia fulva`, `Solenopsis invicta`, MH_shannon_div_alpha)
+
+ alpha_dist_edge_shannon <- ggplot(MH_shannon_div_df_alpha, aes(x = dist_km, y = MH_shannon_div_alpha, color = invader))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x), se = F)+
+  theme_classic()+
+  labs(x = "Distance to preserve edge (km)",
+       y = "Shannon diversity index")+
+   scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))
+
+
+## simpson div - no difference in alpha diversity across the years
+MH_simpson_div_alpha <- diversity(MH_alpha_div_df, "simpson")
+
+MH_simpson_div_df_alpha <- as.data.frame(MH_simpson_div_alpha) %>% 
+  bind_cols(MH_shannon_div_df_alpha)
+
+alpha_dist_edge_simpson <- ggplot(MH_simpson_div_df_alpha, aes(x = dist_km, y = MH_simpson_div_alpha, color = invader))+
+  geom_point()+
+  geom_jitter(width = 0.05, height = 0)+
+  geom_smooth(method = "lm", formula = y ~ (x), se = F)+
+  theme_classic()+
+  labs(x = "Distance to preserve edge (km)",
+       y = "Simpson diversity index")+
+  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+  scale_color_manual(values = wes_palette("GrandBudapest1"))
+
+
+
+```
+
+```{r alpha figs distance to edge, echo = F, fig.width=6, fig.height=4, warning=F}
+
+alpha_figs_dist_edge <- plot_grid(alpha_dist_edge_shannon +
+                                    theme(legend.position = "hide"), 
+                           alpha_dist_edge_simpson + 
+                             theme(legend.position = "hide"), labels = "auto")
+
+
+
+legend_dist_alpha <- get_legend(alpha_dist_edge_shannon + theme(legend.position="bottom", legend.key = element_blank(),
+                                                                legend.title = element_blank(), legend.background=element_blank()))
+
+
+
+plot_grid( alpha_figs_dist_edge, legend_dist_alpha,ncol = 1, rel_heights = c(1, .04))
+```
+
+
+Fig 15. Alpha diversity increases in the interior of the preserve when when *S. invicta* is present and decreases when *S. invicta* and *N. fulva* are absent.
+
+```{r distance to edge set up for NMDS , echo = F, include = F}
+## looking at Meghan's data in terms of community composition and distance to edge
+## using ordination (nMDS or PCoA and PERMANOVA + permdist)
+data_NMDS_dist <- MH_simpson_div_df_alpha %>% 
+  select(-c(MH_simpson_div_alpha:Site_Code), -c(invader:dist_km))
+
+meta_data_NMDS_dist <- MH_simpson_div_df_alpha %>% 
+  select(c(MH_simpson_div_alpha:Site_Code), c(invader:dist_km))
+
+
+
+# Then calculate multivariate distances between samples using vegdist() with one of various distance metrics:
+dist_jac <- vegdist(data_NMDS_dist, method = "jaccard", binary = TRUE) # Binary jaccard distance (presence/absence)
+dist_BC_dist <- vegdist(data_NMDS_dist, method = "bray")#, binary = TRUE) # Bray-Curtis distance
+
+# Then generate an MDS object using metaMDS(): ### hooray!! it converges and stress is 0.179
+mds_dist <- metaMDS(dist_BC_dist, trymax = 300)
+
+# Plot the mds using basic graphics
+plot(mds_dist)
+
+# Make this into a ggplot:
+# Extract the coordinates:
+points <- as.data.frame(mds_dist$points)
+points
+
+# Add metadata to the points:
+meta_data_NMDS_dist2<- meta_data_NMDS_dist %>% 
+  #select(-drop_these) %>% 
+  bind_cols(points) %>% 
+  mutate(dist_bins = ifelse(dist_km < 0, "outside", ifelse(dist_km > 0 & dist_km < 3, "mid", "deep")))
+
+NMDS_dist_plot <- ggplot(data = meta_data_NMDS_dist2, aes(x = MDS1, y = MDS2))+
+  geom_point(aes(color = dist_bins), size = 3)+
+ # stat_ellipse(aes(color = (invader)))+
+  #scale_color_manual(values = c("darkgray", "black"))+
+ #  scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+#  scale_color_manual(values = wes_palette("GrandBudapest1"))+
+  labs(x = "NMDS1",
+       y = "NMDS2")+
+  theme_classic()+
+  theme(legend.position = "bottom", legend.title = element_blank())
+
+```
+
+```{r NMDS distance binned, echo = F, fig.width=4, fig.height=4, warning=F}
+#NMDS_dist_plot
+```
+
+
+
+```{r nmds dist set up 2.1, echo=FALSE, include = F}
+#Visualization of the ant communities (using a bray-curtis dissimilarity matrix). Each point represents the pooled community across pitfall traps within each site. Colors represent (a) seasons and (b) years. 
+#We can use PERMANOVA analyses to test whether ant community composition varied between presence of N. fulva, S. invicta or neither of these species. PERMANOVA tests for differences in the locations of multivariate groups. We used the adonis function of vegan. As we had repeated community measures within site, we constrained permutations to within sites (using the "strata" argument). We included season and year as fixed effects in the models. These analyses confirmed that season had a significant effect on community composition and explained approximately 5% of the variation ($R^2$ = 0.055)
+
+
+ perm <- adonis(dist_BC_dist ~ dist_bins, data = meta_data_NMDS_dist2)
+
+
+adon.results_df<-as.data.frame(perm$aov.tab)
+
+## Composition in ant communitynot strongly affected by distance to edge
+
+```
+
+
+
+```{r dist dispersion, echo=FALSE, include = F}
+
+# 
+# 
+ group2 <- meta_data_NMDS_dist2$dist_bins
+# ## Calculate multivariate dispersions
+ mod <- betadisper(dist_BC_dist, group2)
+ mod
+# 
+# ## Perform test
+ anova(mod)
+# 
+# ## Permutation test for F
+ permutest(mod, pairwise = T)
+ 
+# ## Tukey's Honest Significant Differences -- v. signficicant for the difference between N. fulva comms and S. invicta and other.
+(mod.HSD <- TukeyHSD(mod))
+ plot(mod.HSD)
+# 
+# ## Plot the groups and distances to centroids on the
+# ## first two PCoA axes
+ plot(mod)
+# 
+# ## Draw a boxplot of the distances to centroid for each group
+ boxplot(mod)
+# 
+ df <- data.frame(Distance_to_centroid=mod$distances,Group=mod$group)
+ groups <- mod$group
+# 
+# 
+# 
+ fm1 <- aov(Distance_to_centroid ~ Group, data = df)
+ res <- TukeyHSD(fm1, "Group", ordered = TRUE)
+ beta_df_res <- as.data.frame(res$G)
+# no difference across distance to edge beta div measures
+
+```
+
+```{r beta div boxplot dist , echo = F, fig.width=8, fig.height=4, warning=F}
+
+boxplot_beta_dist <- ggplot(data=df,aes(x=Group,y=Distance_to_centroid,fill = Group))+
+   geom_boxplot() +
+   geom_jitter()+
+   #scale_x_discrete(limits=c("Spring","Fall"))+
+   #scale_fill_manual(values = c("darkgray", "black"))+
+    #scale_fill_manual(values = wes_palette("GrandBudapest1"))+
+   #scale_color_manual(values = wes_palette("GrandBudapest1"))+
+   theme_classic()+
+   labs(y = "Distance to centroid",
+        x = "")+
+   theme(legend.position = "none") 
+
+
+dist_edge_beta_plots <- plot_grid(NMDS_dist_plot, 
+                           boxplot_beta_dist, labels = "auto")
+
+dist_edge_beta_plots
+
+
+```
+
+Fig 16. (a) NMDS visualization of ant communities colored by distance to edge (k = 2) - distance to edge is not a significant predictor of ant community composition (PERMANOVA p = 0.056, $R^2$ = 0.172) and (b) beta diversity of these communities was similar across the different distances (Tukey post-hoc HSD p > 0.05). Each point represents the pooled community across all collection methods within a Site Code. Colors represent outside the preserve (< 0 km), mid distance within the preserve (0-3 km), and deep within the preserve (>3 km).
+
+Adonis PERMANOVA table
+```{r table dist permanova, echo = F, warning = F}
+kable(adon.results_df)
+```
+
+Tukey post-hoc HSD table for beta diversity 
+```{r table beta div dist, echo = F, warning = F}
+kable(beta_df_res)
+```
+
+
